@@ -1,0 +1,8 @@
+{
+  "name": "Justin Chu",
+  "background": "CS + Chemistry student at University of Michigan (graduating May 2026) with ML and full-stack experience from Cove.ai, a Sequoia-backed AI startup. Built React features with AI integration, developed gradient boosting models for drug discovery, and shipped production code with Playwright testing.",
+  "interests": "AI/ML applications, full-stack development, automation tools, and building products that leverage LLMs",
+  "looking_for": "New grad software engineering roles at startups building AI-powered products where I can contribute to both frontend and backend development",
+  "github_repo": "https://github.com/mokadoe/justin-job-apps",
+  "project_description": "Built an automated job discovery and outreach pipeline using Python, SQLite, Claude API, and Google Custom Search to find new grad roles and identify decision makers at startups"
+}
