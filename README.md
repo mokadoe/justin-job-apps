@@ -78,6 +78,30 @@ python3 src/outreach/prepare_outreach.py
 
 1. **Job Scraping** → 2. **AI Filtering** → 3. **Contact Discovery** → 4. **Message Generation** → 5. **Outreach** (Manual)
 
+### Data Sources
+
+**Current Sources:**
+
+1. **Ashby ATS** (Primary - Automated)
+   - 305 companies actively scraped via API
+   - 7,124 jobs loaded
+   - 16 pending new grad positions identified
+   - Direct API access: `https://api.ashbyhq.com/posting-api/job-board/{company}`
+
+2. **Simplify Jobs GitHub** (Prospective - Manual)
+   - Repository: [SimplifyJobs/New-Grad-Positions](https://github.com/SimplifyJobs/New-Grad-Positions)
+   - 587 unique companies extracted (572 new, 15 already in DB)
+   - Updated daily by Simplify team
+   - Output: `data/prospective_companies.txt`
+   - Command: `make simplify` to refresh
+   - **Use case:** Discovery of new companies to add to scraping pipeline
+
+**Future Sources:**
+- Y Combinator Work at a Startup (1000+ companies)
+- Greenhouse ATS
+- Lever ATS
+- LinkedIn job postings
+
 ### Database Schema
 
 **5 Tables:**
@@ -105,10 +129,11 @@ justin-job-apps/
 │
 ├── src/                  # Source code
 │   ├── scrapers/         # Job scraping & loading
-│   │   ├── ashby_scraper.py      # Ashby ATS API scraper
-│   │   ├── ats_mapper.py         # Dynamic ATS field mapping
-│   │   ├── ats_mappings.json     # ATS platform configs
-│   │   └── load_jobs.py          # Main job loading pipeline
+│   │   ├── ashby_scraper.py       # Ashby ATS API scraper
+│   │   ├── simplify_scraper.py    # Simplify Jobs GitHub scraper
+│   │   ├── ats_mapper.py          # Dynamic ATS field mapping
+│   │   ├── ats_mappings.json      # ATS platform configs
+│   │   └── load_jobs.py           # Main job loading pipeline
 │   │
 │   ├── filters/          # Job filtering & validation
 │   │   ├── filter_jobs.py        # Claude API filtering (new grad only)
@@ -128,8 +153,9 @@ justin-job-apps/
 │       └── view.py               # Database inspection CLI
 │
 ├── data/                 # Data directory
-│   ├── jobs.db           # SQLite database (gitignored)
-│   └── ashby_companies.txt # List of Ashby companies
+│   ├── jobs.db                    # SQLite database (gitignored)
+│   ├── ashby_companies.txt        # List of Ashby companies (305)
+│   └── prospective_companies.txt  # Companies from Simplify (572 new)
 │
 ├── schemas/              # Database schemas
 │   └── jobs.sql          # Table definitions
@@ -147,16 +173,29 @@ justin-job-apps/
 
 ### 1. Job Scraping (`src/scrapers/`)
 
-**Purpose:** Fetch job postings from ATS platforms
+**Purpose:** Fetch job postings from ATS platforms and discover new companies
 
 **How it works:**
-- `ashby_scraper.py` - Hits public Ashby API (`https://api.ashbyhq.com/posting-api/job-board/{company}`)
+- `ashby_scraper.py` - Hits public Ashby API with intelligent slug resolution
+  - **3-pass approach**: original slug → simple variations → batched AI suggestions
+  - Uses Claude Haiku (cheapest model) for batch slug resolution on 404 errors
+  - Example: "Hims & Hers" → auto-resolves to "hims-and-hers"
+- `slug_resolver.py` - Batched slug resolution using Claude Haiku (NEW)
+  - Makes ONE API call for all failed companies (efficient)
+  - Tries simple patterns first (free), AI as fallback
+- `simplify_scraper.py` - Extracts companies from Simplify Jobs GitHub repo (prospecting tool)
 - `ats_mapper.py` - Dynamic field mapping system (learn schema once per platform, reuse for all companies)
 - `load_jobs.py` - Main pipeline to load jobs into database
 
-**Key Decision:** Direct ATS API > web scraping (clean JSON, no HTML parsing, reliable structure)
+**Key Decisions:**
+- Direct ATS API > web scraping (clean JSON, no HTML parsing, reliable structure)
+- Simplify Jobs as discovery source > manual company research (curated list, daily updates)
+- Batched AI slug resolution > per-company API calls (cost-efficient, faster)
 
-**Status:** ✅ Working - 7,124 jobs loaded from 305 companies
+**Status:**
+- ✅ Ashby: 7,124 jobs loaded from 305 companies (with auto slug resolution)
+- ✅ Simplify: 572 new prospective companies identified (run `make simplify`)
+- ✅ Slug resolver: Handles tricky company names automatically
 
 ### 2. Job Filtering (`src/filters/`)
 
@@ -297,6 +336,7 @@ FROM target_jobs;
 ```bash
 make init       # Initialize database with schema
 make load       # Load all Ashby jobs into database
+make simplify   # Extract prospective companies from Simplify Jobs GitHub
 make inspect    # Display database contents (companies, jobs, targets)
 make targets    # Show filtered jobs statistics and sample
 make analyze    # Analyze job data (locations, titles, keywords)
