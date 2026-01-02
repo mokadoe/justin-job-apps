@@ -1,4 +1,4 @@
-.PHONY: help init load inspect targets analyze filter validate purge test clean
+.PHONY: help init load inspect targets analyze filter validate purge test clean simplify
 
 PYTHON := . env/bin/activate && python3
 
@@ -6,6 +6,7 @@ help:
 	@echo "Available commands:"
 	@echo "  make init      - Initialize database with schema"
 	@echo "  make load      - Load all Ashby jobs into database"
+	@echo "  make simplify  - Extract prospective companies from Simplify Jobs GitHub"
 	@echo "  make inspect   - Display all database contents"
 	@echo "  make targets   - Show filtered jobs statistics and company breakdown"
 	@echo "  make analyze   - Analyze jobs (locations, titles, keywords)"
@@ -24,6 +25,10 @@ init:
 load:
 	@echo "Loading Ashby jobs into database..."
 	$(PYTHON) src/scrapers/load_jobs.py
+
+simplify:
+	@echo "Extracting companies from Simplify Jobs GitHub repo..."
+	$(PYTHON) src/scrapers/simplify_scraper.py
 
 inspect:
 	@echo "Inspecting database..."

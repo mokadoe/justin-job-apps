@@ -1,0 +1,580 @@
+# Prospective Companies from Simplify Jobs
+# Source: https://raw.githubusercontent.com/SimplifyJobs/New-Grad-Positions/dev/README.md
+# Total: 572 companies
+# Generated: 2026-01-01T19:33:10.018129
+#
+# Note: Companies already in jobs.db are excluded from this list
+#
+
+2K
+360 IT Professionals
+7shifts
+A Thinking Ape
+Abbott
+Abnormal Security
+Abridge
+Activate Group
+Adobe
+Adtheorant
+Advanced Energy
+AeroVironment
+AES Corporation
+Aevex Aerospace
+Affirm
+Aflac
+AG Technologies
+AHEAD
+AIG
+Akamai Technologies
+Akuna Capital
+Aledade
+AllianceBernstein
+AllTrails
+Alpha FMC
+Alphataraxia
+Altamira Technologies
+Altice USA
+Alumni Ventures
+Amae Health
+Amazon
+Amentum
+American Express
+Ameriprise
+Amplitude
+Analog Devices
+Anduril
+Anduril Industries
+Anyscale
+Apex Fintech Solutions
+Apple
+Applied Intuition
+Applied Materials
+AppLovin
+Ardent
+Aristocrat Leisure
+Artefact
+ASM International
+AspenTech
+Atlassian
+Aurora Innovation
+Auto Club Enterprises
+Autodesk
+Avery Dennison
+AVEVA
+Axon
+Axos Bank
+BAE Systems
+Bank of America
+Barclays
+Barry-Wehmiller
+Bass Pro Shops
+Battelle
+BBB
+Becton, Dickinson and Company
+Belden
+Belvedere Trading
+Benchling
+Berkshire Hathaway Energy
+BlackEdge Capital
+blend360
+Blue Origin
+Blue Yonder
+BlueCross BlueShield of Tennessee
+Blueprint Technologies
+Boeing
+Bombora
+Bonterra
+Boom
+Boom Supersonic
+Booz Allen
+Boston Scientific
+Brandes Associates
+Bree
+BRM
+Broadcom Limited
+Brookhaven Lab
+BryceTech
+BTI Solutions
+Bumble
+Businessolver
+ByteDance
+Cable One
+CACI
+Cadence Design Systems
+Cadent
+Candid Health
+Canonical
+Capco
+Cape
+Capital One
+Capital Rx
+Capitolis
+Capstone
+Captivation
+Caris
+Caterpillar Inc.
+Cellular Sales
+Centene
+CenturyLink
+CesiumAstro
+Charles Schwab
+Chewy
+Chime
+Choice Hotels
+Chord Energy
+Ciena
+Cincinnati Financial
+Circle
+Cisco
+Citadel
+Citadel Securities
+Citi
+Citizen Health
+Clarity Innovations
+CLEAR
+CliftonLarsonAllen
+Coalition
+Cohesity
+Collective Hub
+Comcast
+CommonLit
+Commure
+Continue
+Cook Systems
+Copeland
+Corebridge Financial
+Cority
+Corner Alliance
+Costar
+CoStar Group
+Cox
+Credit Acceptance Careers
+Cummins
+CVS Health
+D2L
+D3
+Daifuku
+Daimler Truck
+Databricks
+Datalab USA
+Daxko Nation
+Dayton Freight Lines
+Dell Technologies
+Delta Solutions & Strategies
+DigitalOcean
+DIRECTV
+Disney
+Divergent Technologies
+Docusign
+Domino Data Lab
+DoorDash
+Dover
+DuCharme, McMillen & Associates
+Duolingo
+EBSCO
+Edgehog Trading
+Electric Boat
+Electronic Arts
+Ellipsis Labs
+Elsevier
+Eluvio
+Empirical Security
+Encore Capital Group
+Entrust
+Epic
+Equip Health
+Esri
+Estes Forwarding Worldwide
+Etsy
+Eventual
+EvenUp
+EverCommerce
+Everlaw
+EVgo
+Evolent
+Evotec
+Expedia
+Expedia Group
+Experian
+ExtraHop
+Falconwood
+Fanatics
+Fidelity National Information Services
+Fifth Third Bank
+Figma
+Finix
+Fireworks AI
+First Financial Bank
+FIS
+Flex
+Flexport
+Flight Schedule Pro
+Folia Health
+Forage
+FourKites
+FOX
+Franklin St
+Freeform
+Fullbay
+Garmin
+Gauntlet Networks
+GCI
+GE Healthcare
+Gecko Robotics
+Generac
+General Dynamics
+General Dynamics Information Technology
+General Dynamics Mission Systems
+General Dynamics UK
+General Motors
+Genies
+Genmo
+Gentex Corporation
+Genuine Parts Company
+Glean
+Glide
+Global Partners
+Global Payments
+Global Relay
+GM financial
+Goldman Sachs
+Google
+Graham Capital Management
+Gridmatic
+Groundswell
+Guidehouse
+Guidewire
+GumGum
+Hastings Direct
+Hewlett Packard (HP)
+Hewlett Packard Enterprise
+HeyGen
+Hireology
+HNTB
+HoneyWell
+Honeywell
+Horace Mann
+Housecall Pro
+Hudson River Trading
+Humana
+Hyperproof
+i3
+IBM
+ICF
+ICF International
+IDEXX
+IMEG
+Inductive Automation
+Insulet
+Insulet Corporation
+Intact
+Integration Innovation (i3)
+Intuit
+Iridium Communications
+iSpot.tv
+ISYS Technologies
+Ivo
+IXL Learning
+Jabil
+Jade Global
+Jamf
+Jane Street
+Johnson & Johnson
+Jonas
+JP Morgan Chase
+JPMorganChase
+KBR
+KeyBank
+Keysight Technologies
+Klaviyo
+Koddi
+Kodiak Robotics
+Konrad Group
+Kroll
+Leidos
+Lennar Corporation
+LexisNexis Risk Solutions
+Lightfield
+LingaTech
+LMI
+LPL Financial Holdings
+LSEG
+Lucid Software
+Lumafield
+Lumen Technologies
+Lyft
+M&T Bank
+Machinify
+Macy's
+Magical
+Magna
+Magnite
+Marqeta
+Mass General Brigham
+Mastercard
+MatX
+Maybern
+McDonald's
+Mechanize
+MedImpact
+Medpace, Inc.
+Medtronic
+Mercury Insurance
+Meshy
+Meta
+METECS
+MetroStar
+Microchip Technology
+Micron Technology
+Microsoft
+Mimecast
+MLabs
+Modernizing Medicine
+Momentum Engineering
+Monterey Technologies
+Morgan Stanley
+Morningstar
+Motive
+Motorola
+Motorola Solutions
+mthree
+MultiCare Health System
+N1
+NCR
+NCR Voyix
+Nelnet
+Neo Financial
+Netflix
+NetImpact Strategies
+NewsBreak
+Nextdoor
+NextEra Energy
+Nexthop.ai
+Nike
+Nodal
+Nominal
+Noom
+Nordstrom
+North Atlantic Industries
+NorthAB
+NorthMark Strategies
+Northrop Grumman
+Northslope Technologies
+Notion
+Nuro
+Nutanix
+NVIDIA
+NXP Semiconductors
+O'Reilly Auto Parts
+OffDeal
+Ohio State University
+Oklo
+Okta
+OKX
+Old Mission
+Omnicell
+OneRail
+OpenEye
+OPENLANE
+Oracle
+PagerDuty
+Palantir
+Panasonic Holdings
+Parafin
+Parallel Wireless
+Parsons
+PathAI
+Pattern Data
+PayPal
+PDI Technologies
+PepsiCo
+Peraton
+Perforce
+Perr & Knight
+Persona
+Picarro
+Pinterest
+Pioneering Evolution
+PJM
+Plug Power
+Plusgrade
+Point72
+PPG Industries
+Premera Blue Cross
+PricewaterhouseCoopers (PwC)
+Procter & Gamble (P&G)
+Promise
+Prosidian Consulting
+Providence
+Prudential Financial
+Pylon
+Q2
+QinetiQ
+qode.world
+Qualtrics
+Quantinuum
+Radian
+Radiant
+Ranger
+Reach Financial
+Red Hat
+Redstone Federal Credit Union
+Reevo
+Relativity Space
+RELX
+Remi
+Remodel Health
+Revionics
+RoadRunner Recycling
+Robert Half
+Robin
+Roblox
+Rocket Science Group
+Rockwell Automation
+Rolls Royce
+Roserocket
+Rover
+RTX
+S&P Global
+Safran
+Salesforce
+Samsara
+Sandisk
+Sayari
+Scale AI
+Schonfeld
+Scientific Research Corporation
+Seagate Technology
+SeatGeek
+Seismic
+Select Milk Producers
+Sentra
+Sentry
+ServiceNow
+Sev1Tech
+SharkNinja
+SHEIN
+Shield AI
+Siemens
+Sierra
+Sierra Nevada Coporation
+Sierra Nevada Corporation
+SIFT
+Sift
+Sigma Computing
+SingleStore
+SkillStorm
+SMX
+SoFi
+Solace Health
+Sonepar
+Sono-Tek Corporation
+Sonos
+Space Dynamics Laboratory
+SpaceX
+Spotify
+SS&C
+Stackline
+State Street
+Steel Point Solutions
+Stony Brook University
+Stripe
+Strive Health
+StubHub
+Sun Life
+Sunwater Capital
+Supernova Technology
+Susquehanna
+Susquehanna International Group (SIG)
+Symbotic
+T-Mobile
+T-Rex Solutions
+Taco Bell
+Tax Relief Advocates
+TD Bank
+TD Securities
+TDS
+TekSynap
+TeleTracking
+Tempus
+Tencent
+Terex
+Tesla
+The Boeing Company
+The Travelers Companies
+The Walt Disney Company
+Themis Insight
+Thorlabs
+TikTok
+TMHCC
+Together AI
+Tokyo Electron
+Torc Robotics
+Tower Research Capital
+Toyota Connected
+TransMarket Group
+Trend Health Partners
+Trexquant
+Tria Federal
+Trimble
+TripAdvisor
+TRM Labs
+True Anomaly
+TrueBuilt
+Truist
+Truist Bank
+Truveta
+Tucows
+Tucows Domains
+Twilio
+Twitch
+Typeface
+Tyson Foods
+Uare.ai
+Uber
+Ultra Intelligence and Communications
+Uncountable
+Unify
+Unisys
+United Parcel Service (UPS)
+USAA
+Vail
+Vail Systems
+Valkyrie Trading
+Valon
+Verisk
+Verkada
+Vermont Information Processing
+Versaterm
+VIAVI
+Viavi Solutions
+Visa
+Voya Financial
+Vultr
+Wanderlog
+Warner Bros.
+Washpost
+Watershed
+WebFX
+WellSky
+WeRide
+Western Digital
+WhatNot
+Whoop
+Wind River
+Wolverine Trading
+World Kinect
+Worldpay
+WPP Media
+WSP
+Wyetech
+Xapien
+Xcel Energy
+Yahoo
+Yodlee
+YouVersion
+Zip
+ZipRecruiter
+ZOLL Medical Corporation
+Zoro
+↳
