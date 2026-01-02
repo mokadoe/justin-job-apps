@@ -61,7 +61,7 @@ Do not include explanations, just the JSON object."""
 
     try:
         response = client.messages.create(
-            model="claude-3-haiku-20240307",  # Cheapest model
+            model="claude-haiku-4-5-20251001",  # Latest Haiku model
             max_tokens=500 + (len(company_names) * 50),  # Scale with batch size
             messages=[{"role": "user", "content": prompt}]
         )

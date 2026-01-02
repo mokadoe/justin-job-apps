@@ -215,7 +215,7 @@ Generate only the message body:"""
 
     try:
         response = client.messages.create(
-            model="claude-3-opus-20240229",
+            model="claude-opus-4-5-20251101",
             max_tokens=600,
             messages=[{
                 "role": "user",
