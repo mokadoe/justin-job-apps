@@ -2,9 +2,41 @@
 
 > Automated system to discover new grad software engineering jobs, find recruiting contacts at startups, and enable targeted outreach.
 
-**Status:** MVP Complete (Day 6/7) - End-to-end outreach pipeline ready for testing
+**🔗 Repository:** https://github.com/mokadoe/justin-job-apps
 
-**Tech Stack:** Python 3.13, SQLite, Claude API (Anthropic), Google Custom Search API
+**📊 Status:** MVP Complete (Day 6/7) - End-to-end outreach pipeline ready for testing
+
+**💻 Tech Stack:** Python 3.13, SQLite, Claude API (Anthropic), Google Custom Search API
+
+---
+
+## 📌 For New Claude Sessions - Read This First
+
+**Current State (as of Jan 1, 2026):**
+- ✅ Complete end-to-end pipeline built and tested
+- ✅ All code committed (10 commits) and pushed to GitHub
+- ✅ Full documentation in place (README, claude.md, docs/)
+- 🔄 **Next step:** Send first batch of real outreach emails and track responses
+
+**What's Working:**
+- Job scraping: 7,124 jobs from 305 companies loaded
+- AI filtering: 16 pending jobs identified (0.22% pass rate)
+- Contact discovery: 73 contacts found (17 priority decision-makers)
+- Message generation: Complete outreach packages with personalized messages + email candidates
+- Database: SQLite with 5 tables, all working
+
+**What You Need to Know:**
+- Database is in `data/jobs.db` (gitignored, local only)
+- API keys in `.env` file (also gitignored)
+- Virtual environment: `env/` (NOT `venv/`)
+- Run `python3 src/outreach/prepare_outreach.py` to see a complete outreach example
+- All make commands work: `make help` for full list
+
+**Common Next Tasks:**
+1. Improve data quality (populate missing company websites)
+2. Send test outreach emails manually
+3. Build response tracking system
+4. Expand contact discovery to remaining companies
 
 ---
 
@@ -665,6 +697,7 @@ Personal project for job search automation. Not for redistribution or commercial
 
 ---
 
-**Last Updated:** 2026-01-01
+**Last Updated:** 2026-01-01 (All commits pushed to GitHub)
 **Project Start:** 2025-12-26
 **Days Elapsed:** 6/7 (MVP complete, ready for testing)
+**Repository:** https://github.com/mokadoe/justin-job-apps
