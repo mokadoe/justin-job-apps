@@ -635,8 +635,13 @@ GOOGLE_CSE_ID=...               # Custom Search Engine ID
 
 **Uses `env/` (NOT `venv/`)**
 - Managed by `direnv` (`.envrc` auto-sources `env/bin/activate`)
-- Python 3.13
-- Dependencies: requests, anthropic, tabulate, beautifulsoup4, python-dotenv
+- Python 3.13+
+- Dependencies: See `requirements.txt`
+  - anthropic (Claude API)
+  - beautifulsoup4 (HTML parsing)
+  - requests (HTTP requests)
+  - python-dotenv (environment variables)
+  - tabulate (CLI output formatting)
 
 ### Installation
 
@@ -644,13 +649,13 @@ GOOGLE_CSE_ID=...               # Custom Search Engine ID
 # Create virtual environment
 python3 -m venv env
 
-# Install dependencies (activate env first)
+# Install dependencies from requirements.txt
 source env/bin/activate
-pip install requests anthropic tabulate beautifulsoup4 python-dotenv
+pip install -r requirements.txt
 
 # Or if direnv is configured
 direnv allow
-pip install requests anthropic tabulate beautifulsoup4 python-dotenv
+pip install -r requirements.txt
 ```
 
 ### Shell Configuration Notes

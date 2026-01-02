@@ -1,0 +1,17 @@
+# Job Application Automation Pipeline - Python Dependencies
+# Python 3.13+
+
+# AI & LLM
+anthropic==0.75.0          # Claude API for job filtering and message generation
+
+# Web Scraping & Parsing
+beautifulsoup4==4.14.3     # HTML parsing for Simplify Jobs scraper
+requests==2.32.5           # HTTP requests for ATS APIs and contact discovery
+
+# Configuration & Environment
+python-dotenv==1.2.1       # Load API keys from .env file
+
+# CLI & Output Formatting
+tabulate==0.9.0            # Pretty-print tables in terminal (view.py)
+
+# Note: SQLite is included in Python standard library (no separate install needed)

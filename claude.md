@@ -62,7 +62,8 @@
 3. `justin-job-apps/docs/mvp_design.md` - Original design document
 
 **Key Points:**
-- Uses Python 3.13, SQLite, Claude API
+- Uses Python 3.13+, SQLite, Claude API
+- Dependencies in `requirements.txt` - install with `pip install -r requirements.txt`
 - Organized by function: `src/scrapers/`, `src/filters/`, `src/discovery/`, `src/utils/`
 - Environment managed by `direnv` with `env/` directory (NOT `venv/`)
 - All commands available via Makefile: `make help`
@@ -72,6 +73,7 @@
 - Read relevant source files in `src/`
 - Understand the database schema in `schemas/jobs.sql`
 - Check constants in `src/utils/constants.py`
+- Ensure dependencies installed: `pip install -r requirements.txt`
 - Test changes with `make <command>`
 
 #### For `mokadoe.github.io/`
@@ -193,10 +195,21 @@ From `justin-job-apps/docs/learnings.md` - applies to all projects:
 - Managed by `direnv` - `.envrc` auto-activates
 - Each project has its own isolated environment
 
+**Dependencies:**
+- All Python dependencies listed in `requirements.txt`
+- Install with: `pip install -r requirements.txt`
+- Key packages:
+  - `anthropic` - Claude API for filtering and message generation
+  - `beautifulsoup4` - HTML parsing for Simplify Jobs scraper
+  - `requests` - HTTP requests for ATS APIs
+  - `python-dotenv` - Environment variable management
+  - `tabulate` - CLI table formatting
+
 **Environment Variables:**
 - Stored in `.env` file (gitignored)
 - Loaded via `python-dotenv` in Python projects
 - Never commit API keys or secrets
+- Required keys: `ANTHROPIC_API_KEY`, `GOOGLE_API_KEY`, `GOOGLE_CSE_ID`
 
 ---
 
