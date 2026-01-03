@@ -266,15 +266,21 @@ make test  # or project-specific command
 
 ## Project Status Reference
 
-### justin-job-apps (Current as of 2026-01-01)
+### justin-job-apps (Current as of 2026-01-03)
 
-**Phase:** MVP Complete (Day 6/7) - Ready for Real Outreach Testing
+**Phase:** Enhanced Filtering Complete (Day 7) - Two-stage AI system deployed
 
-**GitHub:** https://github.com/mokadoe/justin-job-apps (10 commits pushed)
+**GitHub:** https://github.com/mokadoe/justin-job-apps (12 commits pushed)
 
 **Completed:**
-- ✅ Job scraping (7,124 jobs from 305 companies)
-- ✅ AI filtering (16 pending new grad jobs, 0.22% pass rate)
+- ✅ Job scraping (7,079 jobs from 304 companies)
+- ✅ **NEW: Two-stage AI filtering (Haiku + Sonnet 4.5)**
+  - 299 pending jobs identified (4.22% pass rate)
+  - 19x improvement over previous filtering (16 jobs @ 0.22%)
+  - Description-based analysis with profile-aware borderline review
+  - Priority system: 151 US jobs (high), 148 non-US jobs (low)
+  - Intern tracking: 48 positions flagged
+- ✅ Enhanced location detection (all 50 US states, tech cities)
 - ✅ Contact discovery (73 contacts, 17 priority decision-makers)
 - ✅ Message generation with Claude API
 - ✅ Email candidate generation with confidence scoring
@@ -284,24 +290,26 @@ make test  # or project-specific command
 
 **Current State:**
 - Database: `data/jobs.db` (local, gitignored) with 5 tables
-- All make commands working
-- Outreach pipeline generates complete packages: company + contact + message + emails
+- All make commands working, including `make review` for optional manual review
+- 299 target jobs ready for outreach (prioritized by location)
+- Optimized architecture: rejected jobs not stored in target_jobs
 
 **Next Steps:**
-- 🔄 Send first 5-10 real outreach emails manually
-- 📊 Track response rates and iterate
-- 🎯 Populate missing company websites (improve email accuracy)
+- 🔄 Review 299 target jobs (prioritize 151 US jobs first)
+- 📊 Expand contact discovery to all target companies
+- 🎯 Send first batch of 5-10 outreach emails
 - 🔧 Build response tracking system
 
 **Key Commands:**
 ```bash
 make init       # Initialize database
 make load       # Load jobs
-make filter     # AI filtering
-make targets    # View results
+make filter     # Two-stage AI filtering (Haiku + Sonnet)
+make targets    # View results with priority breakdown
+make review     # Interactive review (optional)
 make inspect    # Database overview
 
-# NEW: Outreach commands
+# Outreach commands
 python3 src/discovery/discover_contacts.py
 python3 src/outreach/prepare_outreach.py
 ```
