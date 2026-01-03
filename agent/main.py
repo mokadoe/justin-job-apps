@@ -3,6 +3,7 @@
 import os
 import json
 import asyncio
+from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse
 from sse_starlette.sse import EventSourceResponse
@@ -15,13 +16,21 @@ from claude_agent_sdk import (
     ToolUseBlock,
     ToolResultBlock,
 )
+import db
 
-app = FastAPI()
 
-# Store active sessions, locks, and chat history
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Initialize database on startup."""
+    await db.init_db()
+    yield
+
+
+app = FastAPI(lifespan=lifespan)
+
+# Store active SDK sessions and locks (in-memory, ephemeral)
 sessions: dict[str, ClaudeSDKClient] = {}
 session_locks: dict[str, asyncio.Lock] = {}
-chat_history: dict[str, list[dict]] = {}  # session_id -> [{role, content}, ...]
 
 
 def get_options():
@@ -53,12 +62,9 @@ async def collect_response(session_id: str, prompt: str) -> list[dict]:
     print(f"[{session_id[:8]}] Starting request: {prompt[:50]}...")
     events = []
 
-    # Initialize chat history for this session
-    if session_id not in chat_history:
-        chat_history[session_id] = []
-
-    # Store user message
-    chat_history[session_id].append({"role": "user", "content": prompt})
+    # Ensure session exists in DB and store user message
+    await db.get_or_create_chat_session(session_id)
+    await db.add_message(session_id, "user", prompt)
 
     try:
         client = await get_or_create_session(session_id)
@@ -87,7 +93,7 @@ async def collect_response(session_id: str, prompt: str) -> list[dict]:
 
         # Store assistant response
         if assistant_text:
-            chat_history[session_id].append({"role": "assistant", "content": assistant_text})
+            await db.add_message(session_id, "assistant", assistant_text)
 
         print(f"[{session_id[:8]}] Response complete, {message_count} messages, {len(events)} events")
     except Exception as e:
@@ -124,46 +130,46 @@ async def chat(session_id: str, request: Request):
 
 @app.delete("/session/{session_id}")
 async def end_session(session_id: str):
-    """End a chat session."""
+    """End a chat session (closes SDK connection and deletes from DB)."""
+    # Close SDK connection if active
     if session_id in sessions:
         await sessions[session_id].disconnect()
         del sessions[session_id]
-        return {"status": "closed"}
+
+    # Delete from database
+    deleted = await db.delete_chat_session(session_id)
+    if deleted:
+        return {"status": "deleted"}
     return {"status": "not_found"}
 
 
 @app.get("/session/{session_id}")
 async def check_session(session_id: str):
-    """Check if a session exists in memory."""
-    if session_id in sessions:
-        return {"exists": True, "session_id": session_id}
-    return {"exists": False}
+    """Check if a session exists."""
+    in_db = await db.session_exists(session_id)
+    in_memory = session_id in sessions
+    return {
+        "exists": in_db,
+        "active": in_memory,  # Has live SDK connection
+        "session_id": session_id
+    }
 
 
 @app.get("/sessions")
 async def list_sessions():
-    """List all active sessions with preview."""
-    result = []
-    for sid in sessions.keys():
-        history = chat_history.get(sid, [])
-        preview = ""
-        if history:
-            first_user = next((m["content"][:50] for m in history if m["role"] == "user"), "")
-            preview = first_user + "..." if len(first_user) == 50 else first_user
-        result.append({
-            "id": sid,
-            "messages": len(history),
-            "preview": preview
-        })
-    return {"sessions": result}
+    """List all sessions with preview."""
+    sessions_list = await db.get_all_sessions()
+    # Add indicator for active SDK connections
+    for s in sessions_list:
+        s["active"] = s["id"] in sessions
+    return {"sessions": sessions_list}
 
 
 @app.get("/history/{session_id}")
 async def get_history(session_id: str):
     """Get chat history for a session."""
-    if session_id in chat_history:
-        return {"history": chat_history[session_id]}
-    return {"history": []}
+    history = await db.get_chat_history(session_id)
+    return {"history": history}
 
 
 HTML = """<!DOCTYPE html>
