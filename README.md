@@ -221,16 +221,15 @@ Strict criteria:
 
 ### 3. Contact Discovery (`src/discovery/`)
 
-**Purpose:** Find founders, CTOs, engineering leads at startups (no recruiters)
+**Purpose:** Find the right contact based on company size (founders for small, recruiters for large)
 
 **How it works:**
-- Google Custom Search API to find:
-  - LinkedIn profiles (founders, CTO, VP Engineering)
-  - Company websites (from ATS URLs)
-  - Team/about/contact pages
-- Extract names and titles from search results
-- Parse LinkedIn URLs for names
-- Store in `contacts` table with `is_priority` flag for decision-makers
+- Determines company size (small/medium/large) to choose targeting strategy
+- Targets different roles: founders/CTOs (small), eng leadership (medium), recruiters (large)
+- Google Custom Search API to find LinkedIn profiles
+- Store in `contacts` table with `is_priority` flag
+
+**Configuration:** Size thresholds and targeting are configurable in `src/utils/constants.py`
 
 **Key Decision:** Google Search > LinkedIn API (no API access required, gets what we need)
 
