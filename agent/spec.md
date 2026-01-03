@@ -1,6 +1,10 @@
 # Claude Agent Chat - Technical Spec
 
 > Minimal implementation of Claude Agent SDK with FastAPI + SSE streaming chat interface.
+>
+> **Deployed at:** https://justin-job-apps-production.up.railway.app
+>
+> See [spec_railway.md](spec_railway.md) for deployment configuration.
 
 ## Overview
 
@@ -68,9 +72,18 @@ A web-based chat interface that connects to Claude via the Claude Agent SDK. Sup
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | `GET` | `/sessions` | List all active sessions |
-| `GET` | `/session/{id}` | Check if session exists |
+| `GET` | `/session/{id}` | Check session status (exists + active) |
 | `DELETE` | `/session/{id}` | End and cleanup session |
 | `GET` | `/history/{id}` | Get chat history for session |
+
+**GET /session/{id} Response:**
+```json
+{
+  "exists": true,
+  "active": true,
+  "session_id": "uuid-string"
+}
+```
 
 **GET /sessions Response:**
 ```json
@@ -79,7 +92,10 @@ A web-based chat interface that connects to Claude via the Claude Agent SDK. Sup
     {
       "id": "uuid-string",
       "messages": 4,
-      "preview": "First user message..."
+      "preview": "First user message...",
+      "active": true,
+      "created_at": "2026-01-03T12:00:00+00:00",
+      "updated_at": "2026-01-03T12:05:00+00:00"
     }
   ]
 }
@@ -110,15 +126,22 @@ A web-based chat interface that connects to Claude via the Claude Agent SDK. Sup
 2. **Reuse**: Same `session_id` reuses existing `ClaudeSDKClient` (maintains conversation history)
 3. **Cleanup**: `DELETE /session/{id}` disconnects client and clears data
 
-### Storage (In-Memory)
+### Storage
 
+**Database (persistent):**
+```python
+# See db.py for models
+ChatSession  # id, created_at, updated_at
+Message      # id, session_id, role, content, created_at
+```
+
+**In-Memory (ephemeral):**
 ```python
 sessions: dict[str, ClaudeSDKClient]     # SDK client instances
 session_locks: dict[str, asyncio.Lock]   # Prevent race conditions
-chat_history: dict[str, list[dict]]      # UI display history
 ```
 
-**Important:** All data is lost on server restart. This is intentional for the MVP.
+**Database selection:** SQLite locally, PostgreSQL on Railway. See [db_setup.md](db_setup.md) for details.
 
 ### Conversation History
 
@@ -166,7 +189,7 @@ ClaudeAgentOptions(
 )
 ```
 
-### Running
+### Running Locally
 
 ```bash
 cd agent
@@ -174,17 +197,20 @@ pip install -r requirements.txt
 uvicorn main:app --reload --port 8000
 ```
 
+### Running on Railway
+
+See [spec_railway.md](spec_railway.md) for deployment details.
+
 ## Known Limitations
 
-1. **No persistence** - Sessions lost on server restart
-2. **No authentication** - Anyone can access any session
-3. **Memory-only** - Large histories could exhaust memory
-4. **Single server** - No horizontal scaling support
-5. **No streaming during generation** - Response collected before sending (workaround for SSE issues)
+1. **No authentication** - Anyone can access any session
+2. **Single server** - No horizontal scaling support
+3. **No streaming during generation** - Response collected before sending (workaround for SSE issues)
+4. **SDK context not persisted** - Chat history persists, but Claude's internal context resets on restart
 
 ## Future Improvements
 
-- [ ] Persistent storage (SQLite/PostgreSQL)
+- [x] Persistent storage (SQLite/PostgreSQL) - See [db_setup.md](db_setup.md)
 - [ ] SDK session resumption (cross-restart persistence)
 - [ ] Authentication
 - [ ] Real-time streaming (fix SSE + async generator issues)
@@ -197,9 +223,16 @@ uvicorn main:app --reload --port 8000
 ```
 agent/
 ├── main.py           # FastAPI server + embedded HTML
+├── db.py             # Database models and CRUD helpers
 ├── requirements.txt  # Dependencies
-├── spec.md          # This file
-└── test_session.py  # SDK session persistence test
+├── spec.md           # This file (application spec)
+├── spec_railway.md   # Railway deployment spec
+├── db_setup.md       # Database setup documentation
+├── Dockerfile        # Container build
+├── railway.toml      # Railway config
+├── .dockerignore     # Docker build excludes
+└── data/
+    └── chat.db       # SQLite database (local, gitignored)
 ```
 
 ## Dependencies
@@ -209,4 +242,8 @@ fastapi>=0.115.0
 uvicorn>=0.32.0
 claude-agent-sdk>=0.1.0
 sse-starlette>=2.0.0
+sqlalchemy[asyncio]>=2.0.0
+aiosqlite>=0.19.0
+asyncpg>=0.29.0
+python-dotenv>=1.0.0
 ```

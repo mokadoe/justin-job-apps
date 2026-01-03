@@ -30,34 +30,78 @@ app = FastAPI(lifespan=lifespan)
 
 # Store active SDK sessions and locks (in-memory, ephemeral)
 sessions: dict[str, ClaudeSDKClient] = {}
+session_models: dict[str, str] = {}  # Track model per session
 session_locks: dict[str, asyncio.Lock] = {}
 
+AVAILABLE_MODELS = [
+    "claude-haiku-4-5-20251001",
+    "claude-sonnet-4-5-20250929",
+    "claude-opus-4-5-20251101",
+]
+DEFAULT_MODEL = "claude-haiku-4-5-20251001"
 
-def get_options():
+
+def get_options(model: str = DEFAULT_MODEL, conversation_history: list[dict] = None):
+    system_prompt = None
+    if conversation_history:
+        # Format history as context for the new model
+        history_text = "\n".join([
+            f"{'User' if m['role'] == 'user' else 'Assistant'}: {m['content']}"
+            for m in conversation_history
+        ])
+        system_prompt = f"""You are continuing a conversation. Here is the conversation history so far:
+
+<conversation_history>
+{history_text}
+</conversation_history>
+
+Continue the conversation naturally, taking into account what was discussed above."""
+
     return ClaudeAgentOptions(
-        model="claude-haiku-4-5-20251001",
+        model=model,
         allowed_tools=["Read", "Write", "Edit", "Bash", "Glob", "Grep","WebSearch","WebFetch"],
         permission_mode="acceptEdits",
+        system_prompt=system_prompt,
     )
 
 
-async def get_or_create_session(session_id: str) -> ClaudeSDKClient:
-    """Get existing session or create new one."""
+async def get_or_create_session(session_id: str, model: str = None) -> ClaudeSDKClient:
+    """Get existing session or create new one. Recreates if model changed."""
     if session_id not in session_locks:
         session_locks[session_id] = asyncio.Lock()
 
+    use_model = model or DEFAULT_MODEL
+
     async with session_locks[session_id]:
+        # Check if model changed - if so, disconnect old client
+        if session_id in sessions:
+            current_model = session_models.get(session_id)
+            if current_model and current_model != use_model:
+                print(f"[{session_id[:8]}] Model changed: {current_model} -> {use_model}, reconnecting...")
+                try:
+                    await sessions[session_id].disconnect()
+                except:
+                    pass
+                del sessions[session_id]
+
         if session_id not in sessions:
-            print(f"[{session_id[:8]}] Creating NEW session")
-            client = ClaudeSDKClient(get_options())
+            # Always load conversation history when creating a new client
+            # This handles: model switch, server restart, or explicit reload
+            history = await db.get_chat_history(session_id)
+            if history:
+                print(f"[{session_id[:8]}] Loading {len(history)} messages from history")
+
+            print(f"[{session_id[:8]}] Creating session with model: {use_model}")
+            client = ClaudeSDKClient(get_options(use_model, history if history else None))
             await client.connect()
             sessions[session_id] = client
+            session_models[session_id] = use_model
         else:
-            print(f"[{session_id[:8]}] REUSING existing session")
+            print(f"[{session_id[:8]}] REUSING existing session (model: {session_models.get(session_id, 'unknown')})")
         return sessions[session_id]
 
 
-async def collect_response(session_id: str, prompt: str) -> list[dict]:
+async def collect_response(session_id: str, prompt: str, model: str = None) -> list[dict]:
     """Collect Claude's response messages."""
     print(f"[{session_id[:8]}] Starting request: {prompt[:50]}...")
     events = []
@@ -67,7 +111,7 @@ async def collect_response(session_id: str, prompt: str) -> list[dict]:
     await db.add_message(session_id, "user", prompt)
 
     try:
-        client = await get_or_create_session(session_id)
+        client = await get_or_create_session(session_id, model)
         print(f"[{session_id[:8]}] Got client, sending query...")
         await client.query(prompt)
         print(f"[{session_id[:8]}] Query sent, receiving response...")
@@ -123,8 +167,9 @@ async def chat(session_id: str, request: Request):
     """Chat endpoint with SSE streaming."""
     body = await request.json()
     prompt = body.get("prompt", "")
+    model = body.get("model")  # Optional: only used when creating new session
     # Collect all events first, then stream them (avoids generator issues)
-    events = await collect_response(session_id, prompt)
+    events = await collect_response(session_id, prompt, model)
     return EventSourceResponse(stream_events(events))
 
 
@@ -151,8 +196,15 @@ async def check_session(session_id: str):
     return {
         "exists": in_db,
         "active": in_memory,  # Has live SDK connection
-        "session_id": session_id
+        "session_id": session_id,
+        "model": session_models.get(session_id),
     }
+
+
+@app.get("/models")
+async def list_models():
+    """List available models."""
+    return {"models": AVAILABLE_MODELS, "default": DEFAULT_MODEL}
 
 
 @app.get("/sessions")
@@ -197,6 +249,9 @@ HTML = """<!DOCTYPE html>
         .assistant { background: #2a2a4a; }
         .tool { background: #1a3a2a; font-size: 0.85rem; font-family: monospace; }
         .error { background: #4a1a1a; color: #faa; }
+        .loading { background: #2a2a4a; color: #888; }
+        .loading::after { content: ''; animation: dots 1.5s infinite; }
+        @keyframes dots { 0%, 20% { content: '.'; } 40% { content: '..'; } 60%, 100% { content: '...'; } }
         #input-area { display: flex; padding: 1rem; background: #0a0a1a; gap: 0.5rem; }
         #prompt { flex: 1; padding: 0.75rem; border: 1px solid #444; border-radius: 6px; background: #1a1a2e; color: #eee; font-size: 1rem; }
         #prompt:focus { outline: none; border-color: #6a6aaa; }
@@ -204,8 +259,11 @@ HTML = """<!DOCTYPE html>
         button:hover { background: #5a5a9a; }
         button:disabled { opacity: 0.5; cursor: not-allowed; }
         pre { white-space: pre-wrap; word-break: break-word; margin: 0; }
-        #debug { font-size: 0.7rem; color: #666; padding: 0.25rem 1rem; background: #0a0a1a; font-family: monospace; }
+        #debug { font-size: 0.7rem; color: #666; padding: 0.25rem 1rem; background: #0a0a1a; font-family: monospace; display: flex; align-items: center; gap: 1.5rem; }
         #debug span { color: #888; }
+        #debug > div { display: flex; align-items: center; gap: 0.4rem; }
+        #model-select { background: #1a1a2e; color: #aaa; border: 1px solid #444; border-radius: 4px; padding: 0.15rem 0.3rem; font-size: 0.7rem; font-family: monospace; cursor: pointer; }
+        #model-select:focus { outline: none; border-color: #6a6aaa; }
     </style>
 </head>
 <body>
@@ -219,17 +277,38 @@ HTML = """<!DOCTYPE html>
             <input id="prompt" type="text" placeholder="Ask Claude..." autofocus>
             <button id="send">Send</button>
         </div>
-        <div id="debug">Session: <span id="session-display">-</span></div>
+        <div id="debug">
+            <div>Session: <span id="session-display">-</span></div>
+            <div>Model: <select id="model-select"></select></div>
+        </div>
     </div>
     <script>
         const chat = document.getElementById('chat');
         const promptInput = document.getElementById('prompt');
         const sendBtn = document.getElementById('send');
+        const modelSelect = document.getElementById('model-select');
 
         // Check URL for session param, otherwise create new
         const urlParams = new URLSearchParams(window.location.search);
         let sessionId = urlParams.get('session') || crypto.randomUUID();
         let currentAssistant = null;
+        let sessionStarted = false;  // Track if session has messages
+
+        async function loadModels() {
+            try {
+                const res = await fetch('/models');
+                const data = await res.json();
+                modelSelect.innerHTML = data.models.map(m => {
+                    // Extract just the model name (e.g., "haiku-4-5" from "claude-haiku-4-5-20251001")
+                    const parts = m.replace('claude-', '').split('-');
+                    const shortName = parts.slice(0, -1).join('-'); // Remove date suffix
+                    return '<option value="' + m + '"' + (m === data.default ? ' selected' : '') + '>' + shortName + '</option>';
+                }).join('');
+            } catch (e) {
+                console.log('Failed to load models:', e);
+                modelSelect.innerHTML = '<option value="claude-haiku-4-5-20251001">haiku-4-5</option>';
+            }
+        }
 
         function addMsg(text, cls) {
             const div = document.createElement('div');
@@ -243,15 +322,25 @@ HTML = """<!DOCTYPE html>
         }
 
         async function loadHistory() {
+            const loadingMsg = addMsg('Loading session', 'loading');
             try {
                 const res = await fetch('/history/' + sessionId);
                 const data = await res.json();
+                loadingMsg.remove();
                 if (data.history && data.history.length > 0) {
+                    sessionStarted = true;
                     for (const msg of data.history) {
                         addMsg(msg.content, msg.role === 'user' ? 'user' : 'assistant');
                     }
                 }
+                // Try to get session's model (may be unknown if server restarted)
+                const sessionRes = await fetch('/session/' + sessionId);
+                const sessionData = await sessionRes.json();
+                if (sessionData.model) {
+                    modelSelect.value = sessionData.model;
+                }
             } catch (e) {
+                loadingMsg.remove();
                 console.log('Failed to load history:', e);
             }
         }
@@ -286,15 +375,29 @@ HTML = """<!DOCTYPE html>
             sendBtn.disabled = true;
             currentAssistant = null;
 
+            sessionStarted = true;
+
+            // Show loading indicator
+            const loadingMsg = addMsg('Thinking', 'loading');
+
             try {
                 const response = await fetch('/chat/' + sessionId, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ prompt: text })
+                    body: JSON.stringify({ prompt: text, model: modelSelect.value })
                 });
 
                 if (!response.ok) {
                     throw new Error('Server error: ' + response.status);
+                }
+
+                // Remove loading indicator once we start receiving
+                let loadingRemoved = false;
+                function removeLoading() {
+                    if (!loadingRemoved) {
+                        loadingMsg.remove();
+                        loadingRemoved = true;
+                    }
                 }
 
                 const reader = response.body.getReader();
@@ -314,18 +417,22 @@ HTML = """<!DOCTYPE html>
                             try {
                                 const data = JSON.parse(line.slice(6));
                                 if (data.text) {
+                                    removeLoading();
                                     if (!currentAssistant) {
                                         currentAssistant = addMsg('', 'assistant');
                                     }
                                     currentAssistant.querySelector('pre').textContent += data.text;
                                     chat.scrollTop = chat.scrollHeight;
                                 } else if (data.tool) {
+                                    removeLoading();
                                     addMsg('🔧 ' + data.tool + ': ' + data.input, 'tool');
                                 } else if (data.result) {
                                     addMsg('✓ ' + data.result.slice(0, 300), 'tool');
                                 } else if (data.error) {
+                                    removeLoading();
                                     addMsg('Error: ' + data.error, 'error');
                                 } else if (data.done) {
+                                    removeLoading();
                                     loadSessions(); // Refresh session list
                                 }
                             } catch (e) {
@@ -334,7 +441,9 @@ HTML = """<!DOCTYPE html>
                         }
                     }
                 }
+                removeLoading(); // Ensure removed if no events
             } catch (err) {
+                loadingMsg.remove();
                 addMsg('Error: ' + err.message, 'error');
             } finally {
                 sendBtn.disabled = false;
@@ -350,14 +459,16 @@ HTML = """<!DOCTYPE html>
         promptInput.onkeydown = e => { if (e.key === 'Enter') sendMessage(); };
         document.getElementById('session-display').textContent = sessionId.slice(0, 8);
 
-        // Load history if resuming, then load session list
-        if (urlParams.get('session')) {
-            loadHistory().then(loadSessions);
-        } else {
-            // Update URL with new session ID
-            history.replaceState(null, '', '/?session=' + sessionId);
-            loadSessions();
-        }
+        // Initialize: load models, then history/sessions
+        loadModels().then(() => {
+            if (urlParams.get('session')) {
+                loadHistory().then(loadSessions);
+            } else {
+                // Update URL with new session ID
+                history.replaceState(null, '', '/?session=' + sessionId);
+                loadSessions();
+            }
+        });
     </script>
 </body>
 </html>"""
