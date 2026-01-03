@@ -31,7 +31,11 @@ REJECT_PATTERNS = {
     'seniority': re.compile(r'\b(senior|sr\.|staff|principal|lead|manager|director|vp|vice president|chief|head of|c-level)\b', re.IGNORECASE),
     'non_engineering': re.compile(r'\b(sales|marketing|account executive|customer success|support|recruiter|recruiting|talent|operations|program manager|product manager|analyst|business development|designer|content|copywriter|finance|accounting|legal|hr|people)\b', re.IGNORECASE),
     'internship': re.compile(r'\b(intern|internship|co-op|coop|part-time|part time)\b', re.IGNORECASE),
+    'non_us': re.compile(r'\b(UK|United Kingdom|London|England|Scotland|Wales|Ireland|Dublin|Germany|Berlin|France|Paris|Spain|Madrid|Italy|Rome|Netherlands|Amsterdam|Switzerland|Zurich|Sweden|Stockholm|Norway|Oslo|Denmark|Copenhagen|Finland|Helsinki|Belgium|Brussels|Austria|Vienna|Portugal|Lisbon|Israel|Tel Aviv|India|Bangalore|Mumbai|China|Beijing|Shanghai|Japan|Tokyo|Singapore|Australia|Sydney|Canada|Toronto|Vancouver|Montreal)\b', re.IGNORECASE),
 }
+
+# US location indicators (for positive matching)
+US_INDICATORS = re.compile(r'\b(United States|USA|US|Remote \(US\)|Remote \(USA\)|California|New York|San Francisco|NYC|Boston|Seattle|Austin|Denver|Chicago|Los Angeles|LA|Portland|Miami|Atlanta|Washington|DC|Texas|Massachusetts|Colorado|Oregon|Florida|Georgia)\b', re.IGNORECASE)
 
 
 def get_unprocessed_jobs():
@@ -41,7 +45,7 @@ def get_unprocessed_jobs():
     cursor = conn.cursor()
 
     cursor.execute("""
-        SELECT j.id, j.job_title, c.name as company_name
+        SELECT j.id, j.job_title, j.location, c.name as company_name
         FROM jobs j
         JOIN companies c ON j.company_id = c.id
         WHERE j.evaluated = 0
@@ -54,12 +58,25 @@ def get_unprocessed_jobs():
     return jobs
 
 
-def should_reject_with_regex(job_title):
+def should_reject_with_regex(job_title, location=None):
     """
     Pre-filter jobs with regex to reject obvious non-matches.
 
     Returns: (should_reject: bool, reason: str)
     """
+    # Check for non-US locations (filter out international roles)
+    if location:
+        # First check if it's explicitly non-US
+        if REJECT_PATTERNS['non_us'].search(location):
+            match = REJECT_PATTERNS['non_us'].search(location)
+            return True, f"Non-US location: {match.group()}"
+
+        # If no clear US indicators and has specific location, be cautious
+        # (Remote jobs without location specified will pass through)
+        if location.strip() and not US_INDICATORS.search(location):
+            # Has a location but no US indicators - likely international
+            return True, f"Non-US location: {location}"
+
     # Check for seniority indicators
     if REJECT_PATTERNS['seniority'].search(job_title):
         match = REJECT_PATTERNS['seniority'].search(job_title)
@@ -247,7 +264,7 @@ def filter_all_jobs():
     potentially_relevant = []
 
     for job in jobs:
-        should_reject, reason = should_reject_with_regex(job['job_title'])
+        should_reject, reason = should_reject_with_regex(job['job_title'], job.get('location'))
         if should_reject:
             regex_rejected.append({
                 'job_id': job['id'],
