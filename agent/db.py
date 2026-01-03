@@ -2,9 +2,17 @@
 
 import os
 from datetime import datetime, timezone
+from pathlib import Path
 from uuid import uuid4
 
+from dotenv import load_dotenv
+
+# Load .env from parent directory (where ANTHROPIC_API_KEY lives)
+env_path = Path(__file__).parent.parent / ".env"
+load_dotenv(env_path)
+
 from sqlalchemy import Column, String, Text, DateTime, ForeignKey, select
+from sqlalchemy.sql import func
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
 from sqlalchemy.orm import DeclarativeBase, relationship
 
@@ -17,8 +25,8 @@ class ChatSession(Base):
     __tablename__ = "sessions"
 
     id = Column(String, primary_key=True, default=lambda: str(uuid4()))
-    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
-    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
     messages = relationship("Message", back_populates="session", cascade="all, delete-orphan")
 
@@ -30,7 +38,7 @@ class Message(Base):
     session_id = Column(String, ForeignKey("sessions.id"), nullable=False)
     role = Column(String, nullable=False)  # "user" or "assistant"
     content = Column(Text, nullable=False)
-    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     session = relationship("ChatSession", back_populates="messages")
 
@@ -121,11 +129,6 @@ async def add_message(session_id: str, role: str, content: str) -> Message:
     async with async_session_factory() as db:
         # Ensure session exists
         await get_or_create_chat_session(session_id)
-
-        # Update session timestamp
-        result = await db.execute(select(ChatSession).where(ChatSession.id == session_id))
-        chat_session = result.scalar_one()
-        chat_session.updated_at = datetime.now(timezone.utc)
 
         # Add message
         message = Message(session_id=session_id, role=role, content=content)
