@@ -70,14 +70,15 @@ def upsert_jobs(cursor, company_id: int, jobs: list) -> dict:
         try:
             # Try to insert, ignore if job_url already exists
             cursor.execute('''
-                INSERT OR IGNORE INTO jobs (company_id, job_url, job_title, job_description, location)
-                VALUES (?, ?, ?, ?, ?)
+                INSERT OR IGNORE INTO jobs (company_id, job_url, job_title, job_description, location, posted_date)
+                VALUES (?, ?, ?, ?, ?, ?)
             ''', (
                 company_id,
                 job.get('job_url'),
                 job.get('job_title'),
                 job.get('job_description'),
-                job.get('location')
+                job.get('location'),
+                job.get('posted_date')
             ))
 
             if cursor.rowcount > 0:

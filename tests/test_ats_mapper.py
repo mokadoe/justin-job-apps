@@ -117,6 +117,7 @@ def test_ashby_mapping():
             print(f"  Company: {job.get('company_name')}")
             print(f"  Title: {job.get('job_title')}")
             print(f"  Location: {job.get('location')}")
+            print(f"  Posted Date: {job.get('posted_date')}")
             print(f"  URL: {job.get('job_url')}")
             print(f"  ATS: {job.get('ats_platform')}")
             # Truncate description if present

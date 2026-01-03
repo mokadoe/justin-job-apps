@@ -15,6 +15,7 @@ class ATSMapper:
         'job_title',
         'job_description',
         'location',
+        'posted_date',
         'ats_platform'
     ]
 

@@ -18,6 +18,7 @@ CREATE TABLE IF NOT EXISTS jobs (
     job_title TEXT NOT NULL,
     job_description TEXT,
     location TEXT,
+    posted_date TEXT,
     evaluated BOOLEAN DEFAULT 0,
     discovered_date TEXT DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (company_id) REFERENCES companies(id)
@@ -66,6 +67,7 @@ CREATE TABLE IF NOT EXISTS messages (
 CREATE INDEX IF NOT EXISTS idx_job_url ON jobs(job_url);
 CREATE INDEX IF NOT EXISTS idx_company_id ON jobs(company_id);
 CREATE INDEX IF NOT EXISTS idx_evaluated ON jobs(evaluated);
+CREATE INDEX IF NOT EXISTS idx_posted_date ON jobs(posted_date);
 CREATE INDEX IF NOT EXISTS idx_company_name ON companies(name);
 CREATE INDEX IF NOT EXISTS idx_ats_platform ON companies(ats_platform);
 CREATE INDEX IF NOT EXISTS idx_target_job_id ON target_jobs(job_id);

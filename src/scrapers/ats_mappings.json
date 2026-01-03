@@ -4,8 +4,9 @@
     "mapping": {
       "job_title": "jobs[].title",
       "job_url": "jobs[].jobUrl",
-      "location": "jobs[].locationName",
-      "job_description": "jobs[].description"
+      "location": "jobs[].location",
+      "job_description": "jobs[].descriptionPlain",
+      "posted_date": "jobs[].publishedAt"
     },
     "base_url_pattern": "https://jobs.ashbyhq.com/{company}",
     "validated_with": "replit",
