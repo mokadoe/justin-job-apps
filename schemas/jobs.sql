@@ -2,6 +2,8 @@
 -- discovery_source: where we found this company (simplify, google, manual)
 -- ats_platform: which ATS they use (ashbyhq, greenhouse, lever) - nullable until enriched
 -- ats_slug: the URL-friendly identifier for their careers page
+-- employee_count: number of employees (from LinkedIn or manual entry)
+-- employee_count_source: 'linkedin', 'manual', 'job_proxy' (how we got the count)
 CREATE TABLE IF NOT EXISTS companies (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT UNIQUE NOT NULL,
@@ -10,6 +12,8 @@ CREATE TABLE IF NOT EXISTS companies (
     ats_slug TEXT,
     ats_url TEXT,
     website TEXT,
+    employee_count INTEGER,
+    employee_count_source TEXT,
     last_scraped TEXT,
     is_active BOOLEAN DEFAULT 1,
     discovered_date TEXT DEFAULT CURRENT_TIMESTAMP

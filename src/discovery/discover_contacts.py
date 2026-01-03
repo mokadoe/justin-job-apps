@@ -55,6 +55,307 @@ PAGE_PATTERNS = [
     '/company/about',
 ]
 
+# Import company size configuration from constants
+import sys
+sys.path.insert(0, str(Path(__file__).parent.parent))
+from utils.constants import (
+    SIZE_SMALL, SIZE_MEDIUM, SIZE_LARGE,
+    USE_LINKEDIN_FOR_COMPANY_SIZE,
+    CONTACT_TARGETING, PRIORITY_ROLE_KEYWORDS,
+    get_company_size_from_employees, get_company_size_from_jobs
+)
+
+
+def search_linkedin_company_url(company_name):
+    """
+    Search Google for a company's LinkedIn page URL.
+
+    Returns the LinkedIn company page URL if found, None otherwise.
+    """
+    if not GOOGLE_API_KEY or not GOOGLE_CSE_ID:
+        return None
+
+    query = f'site:linkedin.com/company "{company_name}"'
+
+    try:
+        params = {
+            'key': GOOGLE_API_KEY,
+            'cx': GOOGLE_CSE_ID,
+            'q': query,
+            'num': 3
+        }
+
+        response = requests.get(GOOGLE_SEARCH_URL, params=params, timeout=10)
+
+        if response.status_code != 200:
+            print(f"    ✗ Google API error: {response.status_code}")
+            return None
+
+        data = response.json()
+        items = data.get('items', [])
+
+        # Return first LinkedIn company page URL
+        for item in items:
+            url = item.get('link', '')
+            if 'linkedin.com/company/' in url:
+                return url
+
+        return None
+
+    except Exception as e:
+        print(f"    ✗ Company page search error: {e}")
+        return None
+
+
+def fetch_linkedin_employee_count(linkedin_url):
+    """
+    Fetch LinkedIn company page and extract employee count from structured data.
+
+    LinkedIn pages embed JSON-LD structured data with numberOfEmployees field:
+    "numberOfEmployees": {"value": 6975, "@type": "QuantitativeValue"}
+
+    Returns integer employee count, or None if not found.
+    """
+    if not linkedin_url:
+        return None
+
+    try:
+        # Fetch the LinkedIn page
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36'
+        }
+        response = requests.get(linkedin_url, headers=headers, timeout=15)
+
+        if response.status_code != 200:
+            print(f"    ✗ LinkedIn page fetch error: {response.status_code}")
+            return None
+
+        html = response.text
+
+        # Look for numberOfEmployees in JSON-LD structured data
+        # Pattern: "numberOfEmployees":{"value":6975,...}
+        match = re.search(r'"numberOfEmployees"\s*:\s*\{\s*"value"\s*:\s*(\d+)', html)
+        if match:
+            return int(match.group(1))
+
+        # Fallback: look for employee count patterns in page text
+        # Pattern: "1,234 employees" or "201-500 employees"
+        exact_match = re.search(r'([\d,]+)\s+employees', html, re.IGNORECASE)
+        if exact_match:
+            count_str = exact_match.group(1).replace(',', '')
+            return int(count_str)
+
+        # Range pattern: "201-500 employees"
+        range_match = re.search(r'(\d+)\s*[-–]\s*(\d+)\s+employees', html, re.IGNORECASE)
+        if range_match:
+            low = int(range_match.group(1))
+            high = int(range_match.group(2))
+            return (low + high) // 2
+
+        return None
+
+    except Exception as e:
+        print(f"    ✗ LinkedIn fetch error: {e}")
+        return None
+
+
+def search_linkedin_company_page(company_name):
+    """
+    Search Google for a company's LinkedIn page URL.
+    DEPRECATED: Use search_linkedin_company_url instead.
+    Kept for backwards compatibility.
+    """
+    return search_linkedin_company_url(company_name)
+
+
+def extract_employee_count(search_result):
+    """
+    Extract employee count from LinkedIn search result snippet.
+    DEPRECATED: Use fetch_linkedin_employee_count instead.
+
+    LinkedIn snippets often contain patterns like:
+    - "1,234 employees"
+    - "501-1000 employees"
+    - "11-50 employees"
+
+    Returns integer count (midpoint for ranges), or None if not found.
+    """
+    if not search_result:
+        return None
+
+    snippet = search_result.get('snippet', '')
+    title = search_result.get('title', '')
+    text = f"{title} {snippet}"
+
+    # Pattern 1: Exact count "1,234 employees" or "1234 employees"
+    exact_match = re.search(r'([\d,]+)\s+employees', text, re.IGNORECASE)
+    if exact_match:
+        count_str = exact_match.group(1).replace(',', '')
+        try:
+            return int(count_str)
+        except ValueError:
+            pass
+
+    # Pattern 2: Range "501-1000 employees" or "11-50 employees"
+    range_match = re.search(r'(\d+)\s*[-–]\s*(\d+)\s+employees', text, re.IGNORECASE)
+    if range_match:
+        try:
+            low = int(range_match.group(1))
+            high = int(range_match.group(2))
+            return (low + high) // 2  # Return midpoint
+        except ValueError:
+            pass
+
+    # Pattern 3: "10K+ employees" or "1K employees"
+    k_match = re.search(r'([\d.]+)\s*K\+?\s+employees', text, re.IGNORECASE)
+    if k_match:
+        try:
+            return int(float(k_match.group(1)) * 1000)
+        except ValueError:
+            pass
+
+    return None
+
+
+def get_employee_count(company_id, company_name, auto_lookup=True):
+    """
+    Get employee count for a company.
+
+    1. Check if already stored in database
+    2. If not and auto_lookup=True, search LinkedIn via Google
+    3. Store result for future use
+
+    Args:
+        company_id: Database ID of company
+        company_name: Name of company for searching
+        auto_lookup: If False, skip Google lookup (for manual entry mode)
+
+    Returns:
+        Tuple of (employee_count, source) where source is 'linkedin', 'manual', 'job_proxy', or None
+    """
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+
+    # Check if we already have it
+    cursor.execute(
+        "SELECT employee_count, employee_count_source FROM companies WHERE id = ?",
+        (company_id,)
+    )
+    row = cursor.fetchone()
+    conn.close()
+
+    if row and row[0] is not None:
+        return (row[0], row[1])
+
+    # If auto_lookup disabled, return None
+    if not auto_lookup:
+        return (None, None)
+
+    # Step 1: Search Google for LinkedIn company page URL
+    print(f"    Searching for LinkedIn company page...")
+    linkedin_url = search_linkedin_company_url(company_name)
+
+    if not linkedin_url:
+        print(f"    ✗ No LinkedIn company page found")
+        return (None, None)
+
+    print(f"    ✓ Found: {linkedin_url}")
+
+    # Step 2: Fetch LinkedIn page and extract employee count from structured data
+    print(f"    Fetching employee count from page...")
+    employee_count = fetch_linkedin_employee_count(linkedin_url)
+
+    if employee_count:
+        store_employee_count(company_id, employee_count, 'linkedin')
+        print(f"    ✓ Found: {employee_count} employees")
+        return (employee_count, 'linkedin')
+    else:
+        print(f"    ✗ Could not extract employee count from page")
+
+    return (None, None)
+
+
+def store_employee_count(company_id, count, source):
+    """Store employee count in database."""
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        UPDATE companies
+        SET employee_count = ?, employee_count_source = ?
+        WHERE id = ?
+    """, (count, source, company_id))
+
+    conn.commit()
+    conn.close()
+
+
+def get_company_size(company_id, company_name, use_linkedin=None):
+    """
+    Determine company size category (small/medium/large).
+
+    Two workflows (configured in constants.py via USE_LINKEDIN_FOR_COMPANY_SIZE):
+
+    Workflow 1 - LinkedIn Method (use_linkedin=True):
+        - Search Google for LinkedIn company page
+        - Extract employee count from search results
+        - Use EMPLOYEE_COUNT_THRESHOLDS to categorize
+        - Falls back to job count if LinkedIn lookup fails
+
+    Workflow 2 - Job Count Proxy (use_linkedin=False):
+        - Count job postings for the company in database
+        - Use JOB_COUNT_THRESHOLDS to categorize
+        - No API calls, instant
+
+    Args:
+        company_id: Database ID of the company
+        company_name: Name of the company (for LinkedIn search)
+        use_linkedin: Override for USE_LINKEDIN_FOR_COMPANY_SIZE config.
+                     If None, uses the value from constants.py
+
+    Returns:
+        Tuple of (size_category: str, count: int, source: str)
+        - size_category: SIZE_SMALL, SIZE_MEDIUM, or SIZE_LARGE
+        - count: employee count or job count depending on method
+        - source: 'linkedin', 'manual', or 'job_count'
+    """
+    # Use config default if not explicitly specified
+    if use_linkedin is None:
+        use_linkedin = USE_LINKEDIN_FOR_COMPANY_SIZE
+
+    if use_linkedin:
+        # WORKFLOW 1: LinkedIn employee count method
+        # First check if we already have employee count in DB
+        count, source = get_employee_count(company_id, company_name, auto_lookup=True)
+
+        if count is not None:
+            size_category = get_company_size_from_employees(count)
+            return (size_category, count, source)
+
+        # LinkedIn lookup failed, fall back to job count
+        print(f"    → LinkedIn lookup failed, falling back to job count")
+
+    # WORKFLOW 2: Job count proxy method
+    job_count = get_job_count_for_company(company_id)
+    size_category = get_company_size_from_jobs(job_count)
+
+    return (size_category, job_count, 'job_count')
+
+
+def get_job_count_for_company(company_id):
+    """Get the number of jobs for a company."""
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+
+    cursor.execute(
+        "SELECT COUNT(*) FROM jobs WHERE company_id = ?",
+        (company_id,)
+    )
+    job_count = cursor.fetchone()[0]
+    conn.close()
+
+    return job_count
+
 
 def get_companies_with_pending_jobs(limit=None):
     """Get companies that have pending jobs."""
@@ -274,37 +575,58 @@ def extract_title_from_snippet(snippet, company_name):
 
 def is_priority_role(title):
     """
-    Determine if this is a priority contact (decision maker).
+    Determine if this is a priority contact.
 
-    Priority: Founder, CEO, CTO
-    Non-priority: Other engineering leadership
+    Uses PRIORITY_ROLE_KEYWORDS from constants.py.
+    Priority roles include decision makers, engineering leadership, and recruiters.
     """
     title_lower = title.lower()
-
-    priority_keywords = [
-        'founder', 'co-founder', 'ceo', 'chief executive',
-        'cto', 'chief technology officer'
-    ]
-
-    return any(keyword in title_lower for keyword in priority_keywords)
+    return any(keyword in title_lower for keyword in PRIORITY_ROLE_KEYWORDS)
 
 
-def discover_people_via_google(company_name):
+def discover_people_via_google(company_name, company_id=None, use_linkedin_for_size=None):
     """
     Discover key people at a company using Google search for LinkedIn profiles.
 
-    Focus on decision makers: Founders, CEOs, CTOs.
+    Targeting based on company size (configured in constants.py):
+    - Small: Target founders, CTOs
+    - Medium: Target engineering leadership
+    - Large: Target recruiters
+
+    Args:
+        company_name: Name of the company
+        company_id: Database ID (needed for size lookup)
+        use_linkedin_for_size: If True, use LinkedIn for size. If False, use job count.
+                              If None, uses USE_LINKEDIN_FOR_COMPANY_SIZE from constants.
+
     Returns list of {name, title, linkedin_url, is_priority}.
     """
     people = []
 
-    # Search for priority roles only (decision makers)
-    role_searches = [
-        ['founder', 'co-founder', 'CEO', 'Chief Executive'],
-        ['CTO', 'Chief Technology Officer', 'VP Engineering'],
-    ]
+    # Determine company size and targeting strategy
+    if company_id:
+        size_category, count, size_source = get_company_size(
+            company_id, company_name, use_linkedin=use_linkedin_for_size
+        )
+        if size_source == 'job_count':
+            print(f"  Company size: {count} jobs ({size_source}) → {size_category}")
+        else:
+            print(f"  Company size: {count} employees ({size_source}) → {size_category}")
+    else:
+        # Default to small company behavior if no company_id
+        size_category = SIZE_SMALL
+        print("  Company size: unknown → defaulting to small company targeting")
 
-    print("  Searching for decision makers on LinkedIn...")
+    # Get targeting strategy from constants
+    role_searches = CONTACT_TARGETING.get(size_category, CONTACT_TARGETING[SIZE_SMALL])
+
+    # Print what we're searching for
+    target_desc = {
+        SIZE_SMALL: "decision makers (founders/CTOs)",
+        SIZE_MEDIUM: "engineering leadership",
+        SIZE_LARGE: "recruiters"
+    }
+    print(f"  Searching for {target_desc.get(size_category, 'contacts')} on LinkedIn...")
 
     for roles in role_searches:
         results = search_linkedin_profiles(company_name, roles)
@@ -455,13 +777,20 @@ def store_contact(company_id, name, title, linkedin_url, is_priority):
     return rows_affected > 0  # True if inserted, False if already existed
 
 
-def discover_contacts_for_companies(companies):
+def discover_contacts_for_companies(companies, use_linkedin_for_size=None):
     """
     Discover and store contact information for companies.
 
     Stores results in database:
     - company.website
+    - company.employee_count (if using LinkedIn method)
     - contacts table (name, title, linkedin_url, is_priority)
+
+    Args:
+        companies: List of company dicts with id, name, ats_url
+        use_linkedin_for_size: If True, use LinkedIn for company size (uses API quota).
+                              If False, use job count proxy (no API calls).
+                              If None, uses USE_LINKEDIN_FOR_COMPANY_SIZE from constants.
 
     Returns list of dicts with discovery results.
     """
@@ -474,6 +803,9 @@ def discover_contacts_for_companies(companies):
             'company_id': company['id'],
             'company_name': company['name'],
             'website': None,
+            'size_category': None,
+            'size_count': None,
+            'size_source': None,
             'people': [],
             'new_contacts': 0
         }
@@ -490,7 +822,20 @@ def discover_contacts_for_companies(companies):
             print("    ✗ Could not find website")
 
         # Discover people via Google search for LinkedIn profiles
-        people = discover_people_via_google(company['name'])
+        # This also determines company size using configured method
+        people = discover_people_via_google(
+            company['name'],
+            company_id=company['id'],
+            use_linkedin_for_size=use_linkedin_for_size
+        )
+
+        # Get the size info that was determined
+        size_category, count, source = get_company_size(
+            company['id'], company['name'], use_linkedin=False  # Don't re-lookup
+        )
+        result['size_category'] = size_category
+        result['size_count'] = count
+        result['size_source'] = source
         result['people'] = people
 
         # Store contacts in database
@@ -526,10 +871,47 @@ def discover_contacts_for_companies(companies):
 
 
 def main():
-    """Discover contacts for top companies with pending jobs."""
+    """Discover contacts for top companies with pending jobs.
+
+    Usage:
+        python discover_contacts.py                  # Use config default from constants.py
+        python discover_contacts.py --use-linkedin   # Force LinkedIn method for company size
+        python discover_contacts.py --use-job-count  # Force job count method (saves API quota)
+        python discover_contacts.py --limit 5        # Process only 5 companies
+    """
+    import argparse
+
+    parser = argparse.ArgumentParser(description='Discover contacts at companies with pending jobs')
+    size_group = parser.add_mutually_exclusive_group()
+    size_group.add_argument('--use-linkedin', action='store_true',
+                           help='Use LinkedIn for company size (overrides config)')
+    size_group.add_argument('--use-job-count', action='store_true',
+                           help='Use job count proxy for company size (overrides config, saves API quota)')
+    parser.add_argument('--limit', type=int, default=10,
+                       help='Max companies to process (default: 10)')
+    args = parser.parse_args()
+
+    # Determine which method to use: CLI override > config default
+    if args.use_linkedin:
+        use_linkedin = True
+        method_source = "CLI override"
+    elif args.use_job_count:
+        use_linkedin = False
+        method_source = "CLI override"
+    else:
+        use_linkedin = USE_LINKEDIN_FOR_COMPANY_SIZE
+        method_source = "constants.py"
+
     print("=" * 80)
     print("CONTACT DISCOVERY VIA GOOGLE + LINKEDIN")
     print("=" * 80)
+
+    if use_linkedin:
+        print(f"\n📊 Size method: LINKEDIN (employee count) [{method_source}]")
+        print("   Thresholds: small <50, medium 50-500, large 500+")
+    else:
+        print(f"\n📊 Size method: JOB COUNT (proxy) [{method_source}]")
+        print("   Thresholds: small <5 jobs, medium 5-20, large 20+")
 
     # Check for API credentials
     if not GOOGLE_API_KEY or not GOOGLE_CSE_ID:
@@ -542,24 +924,31 @@ def main():
         print("   GOOGLE_CSE_ID=your_search_engine_id_here")
         return
 
-    # Get companies with pending jobs (start with top 10)
+    # Get companies with pending jobs
     print("\nGetting companies with pending jobs...")
-    companies = get_companies_with_pending_jobs(limit=10)
+    companies = get_companies_with_pending_jobs(limit=args.limit)
 
     if not companies:
         print("No companies with pending jobs found.")
         return
 
     print(f"Found {len(companies)} companies to process")
+
+    # Estimate API usage
+    # Per company: 2 contact searches + 1 size lookup (if LinkedIn) = 2-3 searches
+    searches_per_company = 3 if use_linkedin else 2
+    estimated_searches = len(companies) * searches_per_company
     print(f"\n⚠ Free tier limit: 100 searches/day")
-    print(f"This will use ~{len(companies) * 3} searches (3 per company)\n")
+    print(f"This will use ~{estimated_searches} searches ({searches_per_company} per company)")
+    if use_linkedin:
+        print("  (Use --use-job-count to skip LinkedIn size lookup and save quota)\n")
 
     # Discover contacts
     print("\n" + "=" * 80)
     print("DISCOVERING CONTACT INFORMATION")
     print("=" * 80)
 
-    results = discover_contacts_for_companies(companies)
+    results = discover_contacts_for_companies(companies, use_linkedin_for_size=use_linkedin)
 
     # Summary
     print("\n" + "=" * 80)
@@ -586,17 +975,31 @@ def main():
         print("STORED CONTACTS BY COMPANY")
         print("=" * 80)
 
-        headers = ["Company", "Website", "New Contacts", "Total Contacts"]
+        headers = ["Company", "Size", "Count", "Source", "Target", "Contacts"]
         rows = []
         for r in results:
-            website_domain = r['website'].replace('https://', '').replace('http://', '') if r['website'] else "Not found"
-            new_contacts = str(r['new_contacts'])
-            total_contacts = str(len(r['people']))
-            rows.append([r['company_name'][:30], website_domain[:30], new_contacts, total_contacts])
+            size_category = r.get('size_category', '?')
+            size_count = r.get('size_count')
+            size_source = r.get('size_source', '')
+
+            # Format size info
+            count_str = str(size_count) if size_count else '?'
+            source_str = size_source[:8] if size_source else ''
+
+            # Target based on size category
+            target_map = {
+                SIZE_SMALL: "CTO",
+                SIZE_MEDIUM: "Eng Lead",
+                SIZE_LARGE: "Recruiter"
+            }
+            target_str = target_map.get(size_category, "?")
+
+            contacts_str = f"{r['new_contacts']} new / {len(r['people'])} total"
+            rows.append([r['company_name'][:20], size_category[:6], count_str, source_str, target_str, contacts_str])
 
         print(tabulate(rows, headers=headers, tablefmt="grid"))
 
-        # Show priority contacts (decision makers)
+        # Show priority contacts
         priority_contacts = []
         for r in results:
             for person in r['people']:
@@ -610,7 +1013,7 @@ def main():
 
         if priority_contacts:
             print("\n" + "=" * 80)
-            print("PRIORITY CONTACTS (Decision Makers) ⭐")
+            print("PRIORITY CONTACTS ⭐")
             print("=" * 80)
 
             headers = ["Company", "Name", "Title", "LinkedIn"]
@@ -625,7 +1028,7 @@ def main():
                 ])
 
             print(tabulate(rows, headers=headers, tablefmt="grid"))
-            print(f"\n✓ {len(priority_contacts)} priority contacts (Founders/CEOs/CTOs) stored in database")
+            print(f"\n✓ {len(priority_contacts)} priority contacts stored in database")
 
     print("\n" + "=" * 80)
     print("DATABASE UPDATED")
