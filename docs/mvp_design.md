@@ -20,10 +20,14 @@ Automated pipeline to find job postings, discover recruiting contacts, and send 
    - Intelligent slug resolution: 3-pass batched approach using Claude Haiku
    - Dynamic ATS mapping system working
 
-2. **AI Filtering** ✅
-   - Two-stage filtering: regex pre-filter + Claude API validation
-   - 16 pending new grad jobs identified (0.22% pass rate - strict criteria working)
-   - 6,876 jobs correctly rejected as not relevant
+2. **AI Filtering** ✅ (Updated Jan 3, 2026)
+   - Two-stage filtering: regex pre-filter + Claude Haiku description analysis
+   - **New approach:** Description-based filtering (less restrictive than title-only)
+   - Three-tier system: ACCEPT / REVIEW / REJECT
+   - Accepts engineering roles with 0-3 years experience or no experience mentioned
+   - Tracks intern jobs separately (is_intern flag)
+   - Expected: 50-100+ pending jobs (0.7-1.4% pass rate with description analysis)
+   - Previous: 16 pending jobs (0.22% pass rate - title-only, too restrictive)
 
 3. **Contact Discovery** ✅
    - Google Custom Search API integration
@@ -453,9 +457,14 @@ Targets don't have recruiters. Need to find founders, CTOs, or hiring managers. 
   - Rationale: Clean JSON, reliable structure, no HTML parsing brittleness
   - Tradeoff: Limited to companies using those specific ATS platforms
 
-- **Two-stage filtering**: Regex pre-filter + Claude API validation
-  - Rationale: 96.5% rejection shows pre-filter saves API costs
-  - Tradeoff: Might miss edge cases (acceptable for MVP)
+- **Two-stage filtering**: Regex pre-filter + Claude Haiku description analysis
+  - Rationale: Title-only filtering missed 99% of new grad roles (only 7 explicit "New Grad" jobs)
+  - New approach (Jan 3): Analyze descriptions for experience requirements using Haiku
+  - Three-tier system: ACCEPT (definite match) / REVIEW (borderline) / REJECT (not relevant)
+  - Less restrictive: Accept engineering roles with 0-3 years or no experience mentioned
+  - Tracks intern jobs separately (is_intern flag) instead of rejecting them
+  - Cost: ~$1 for 7,000 jobs (Haiku is cheap, descriptions worth analyzing)
+  - Expected improvement: 0.22% → 0.7-1.4% pass rate (3-6x more matches)
 
 - **SQLite over cloud DB**: Local-first approach
   - Rationale: Simple setup, no cloud dependency, sufficient for 10k+ jobs
