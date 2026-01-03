@@ -26,12 +26,16 @@ CREATE TABLE IF NOT EXISTS jobs (
 
 -- Target jobs table (filtered jobs to apply to)
 -- Status: 0=not_relevant, 1=pending, 2=reviewed, 3=applied
+-- Priority: 1=high (US), 2=medium, 3=low (non-US but relevant)
 CREATE TABLE IF NOT EXISTS target_jobs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     job_id INTEGER NOT NULL UNIQUE,
     relevance_score REAL,
     match_reason TEXT,
     status INTEGER DEFAULT 1,
+    priority INTEGER DEFAULT 1,
+    is_intern BOOLEAN DEFAULT 0,
+    experience_analysis TEXT,
     added_date TEXT DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (job_id) REFERENCES jobs(id)
 );

@@ -1,4 +1,4 @@
-.PHONY: help init load inspect targets analyze filter validate purge test clean simplify
+.PHONY: help init load inspect targets analyze filter validate review purge test clean simplify
 
 PYTHON := . env/bin/activate && python3
 
@@ -10,7 +10,8 @@ help:
 	@echo "  make inspect   - Display all database contents"
 	@echo "  make targets   - Show filtered jobs statistics and company breakdown"
 	@echo "  make analyze   - Analyze jobs (locations, titles, keywords)"
-	@echo "  make filter    - Filter jobs with Claude API (strict new grad only)"
+	@echo "  make filter    - Filter jobs with Claude API (description-based analysis)"
+	@echo "  make review    - Review jobs marked as REVIEW (interactive)"
 	@echo "  make validate  - Re-validate pending jobs with strict criteria"
 	@echo "  make purge     - Delete all data from tables (keeps schema)"
 	@echo "  make clean     - Delete database file completely"
@@ -39,8 +40,12 @@ analyze:
 	$(PYTHON) src/utils/view.py analyze
 
 filter:
-	@echo "Filtering jobs with Claude API (loading API key from .env)..."
+	@echo "Filtering jobs with Claude Haiku (description-based analysis)..."
 	$(PYTHON) src/filters/filter_jobs.py
+
+review:
+	@echo "Starting interactive review of REVIEW jobs..."
+	$(PYTHON) src/filters/review_jobs.py
 
 validate:
 	@echo "Re-validating pending jobs with strict new grad criteria..."
