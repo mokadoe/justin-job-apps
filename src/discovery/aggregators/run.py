@@ -84,7 +84,7 @@ def store_companies(companies: list[CompanyLead], source: str) -> dict:
 
             # Extract slug from ATS URL
             ats_slug = extract_slug_from_ats_url(company.ats_platform, company.ats_url)
-            is_active = 1 if company.ats_platform in SUPPORTED_ATS else 0
+            is_active = company.ats_platform in SUPPORTED_ATS
 
             cursor.execute(f"""
                 INSERT INTO companies (name, discovery_source, ats_platform, ats_slug, ats_url, website, is_active)
