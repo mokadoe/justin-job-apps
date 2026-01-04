@@ -282,15 +282,14 @@ async def get_company_count() -> int:
 async def get_companies_by_platform(ats_platform: str) -> list[dict]:
     """Get all companies for a given ATS platform."""
     async with jobs_session_factory() as db:
-        # Only select columns we need (avoids schema mismatch with Railway)
         result = await db.execute(
-            select(Company.id, Company.name, Company.ats_url)
+            select(Company.id, Company.name, Company.ats_url, Company.last_scraped)
             .where(Company.ats_platform == ats_platform)
             .where(Company.is_active == True)
             .order_by(Company.name)
         )
         rows = result.all()
-        return [{"id": r.id, "name": r.name, "ats_url": r.ats_url} for r in rows]
+        return [{"id": r.id, "name": r.name, "ats_url": r.ats_url, "last_scraped": r.last_scraped} for r in rows]
 
 
 async def get_job_count() -> int:
@@ -357,3 +356,114 @@ async def get_stats() -> dict:
         "pending_jobs": pending,
         "contacts": contacts,
     }
+
+
+# Filter command helpers
+
+async def get_unevaluated_jobs(limit: int = None) -> list[dict]:
+    """Get jobs where evaluated=0, with company info.
+
+    Returns list of dicts compatible with filter_jobs.py functions.
+    """
+    async with jobs_session_factory() as db:
+        query = (
+            select(
+                Job.id,
+                Job.job_title,
+                Job.job_description,
+                Job.location,
+                Company.name.label("company_name")
+            )
+            .join(Company, Job.company_id == Company.id)
+            .where(Job.evaluated == False)
+            .order_by(Job.id)
+        )
+        if limit:
+            query = query.limit(limit)
+
+        result = await db.execute(query)
+        rows = result.all()
+
+        return [
+            {
+                "id": r.id,
+                "job_title": r.job_title,
+                "job_description": r.job_description,
+                "location": r.location,
+                "company_name": r.company_name,
+            }
+            for r in rows
+        ]
+
+
+async def insert_target_job(
+    job_id: int,
+    relevance_score: float,
+    match_reason: str,
+    priority: int = 1,
+    is_intern: bool = False,
+    experience_analysis: dict = None
+) -> TargetJob | None:
+    """Insert into target_jobs table.
+
+    Returns TargetJob if inserted, None if already exists (duplicate).
+    """
+    import json
+
+    async with jobs_session_factory() as db:
+        # Check if already exists
+        result = await db.execute(
+            select(TargetJob).where(TargetJob.job_id == job_id)
+        )
+        existing = result.scalar_one_or_none()
+        if existing:
+            return None
+
+        target = TargetJob(
+            job_id=job_id,
+            relevance_score=relevance_score,
+            match_reason=match_reason,
+            status=1,  # pending
+            priority=priority,
+            is_intern=is_intern,
+            experience_analysis=json.dumps(experience_analysis) if experience_analysis else None
+        )
+        db.add(target)
+        await db.commit()
+        await db.refresh(target)
+        return target
+
+
+async def mark_jobs_evaluated(job_ids: list[int]) -> int:
+    """Set evaluated=1 for given job IDs. Returns count updated."""
+    if not job_ids:
+        return 0
+
+    async with jobs_session_factory() as db:
+        result = await db.execute(
+            select(Job).where(Job.id.in_(job_ids))
+        )
+        jobs = result.scalars().all()
+
+        count = 0
+        for job in jobs:
+            job.evaluated = True
+            count += 1
+
+        await db.commit()
+        return count
+
+
+async def reset_evaluated() -> int:
+    """Reset all jobs to evaluated=0 for re-filtering. Returns count reset."""
+    async with jobs_session_factory() as db:
+        result = await db.execute(select(Job).where(Job.evaluated == True))
+        jobs = result.scalars().all()
+
+        count = 0
+        for job in jobs:
+            job.evaluated = False
+            count += 1
+
+        await db.commit()
+        return count

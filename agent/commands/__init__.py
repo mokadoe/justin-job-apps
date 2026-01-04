@@ -154,3 +154,4 @@ def run_sync_with_output(fn: Callable, *args, **kwargs) -> AsyncGenerator[str, N
 # Import command modules to register them
 from . import scrape
 from . import jobs
+from . import filter
