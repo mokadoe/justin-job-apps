@@ -1,6 +1,9 @@
 # Railway Deployment Spec
 
-> Deployment configuration for running the Claude Agent Chat on Railway. See [spec.md](spec.md) for the application spec.
+> Deployment configuration for running the Claude Agent Chat on Railway.
+>
+> See [spec.md](spec.md) for application spec.
+> See [db_setup.md](db_setup.md) for database configuration.
 
 ## Live URL
 
@@ -14,7 +17,7 @@ Railway Project: job-flow
 │   ├── Environment: production
 │   ├── Root Directory: /agent
 │   ├── Builder: Dockerfile
-│   └── Variables: ANTHROPIC_API_KEY, DATABASE_URL
+│   └── Variables: ANTHROPIC_API_KEY, DATABASE_URL, GOOGLE_API_KEY, GOOGLE_CSE_ID
 │
 └── Service: Postgres
     ├── Type: Managed PostgreSQL
@@ -60,10 +63,11 @@ restartPolicyMaxRetries = 3
 | Variable | Required | Set By | Purpose |
 |----------|----------|--------|---------|
 | `ANTHROPIC_API_KEY` | Yes | User | Claude API access |
-| `DATABASE_URL` | Yes | Railway | PostgreSQL connection (linked from Postgres service) |
+| `DATABASE_URL` | Yes | Railway | PostgreSQL connection (linked) |
+| `GOOGLE_API_KEY` | Optional | User | Contact discovery |
+| `GOOGLE_CSE_ID` | Optional | User | Contact discovery |
 | `PORT` | No | Railway | Server port (auto-set) |
-| `RAILWAY_ENVIRONMENT` | No | Railway | Auto-detected to select database |
-| `RAILWAY_*` | No | Railway | Various Railway metadata |
+| `RAILWAY_ENVIRONMENT` | No | Railway | Auto-detected for DB selection |
 
 **Variable Linking:** `DATABASE_URL=${{Postgres.DATABASE_URL}}` resolves at runtime to the internal PostgreSQL connection string.
 
@@ -99,29 +103,6 @@ This repo contains multiple projects. Railway is configured to only deploy from 
 - Only changes in `agent/` trigger deploys
 - `railway.toml` lives inside `agent/`
 
-## Local vs Production
-
-| Aspect | Local | Railway |
-|--------|-------|---------|
-| Command | `uvicorn main:app --reload --port 8000` | Auto via Dockerfile |
-| Port | 8000 (default) | `$PORT` (Railway sets) |
-| URL | `http://localhost:8000` | `https://justin-job-apps-production.up.railway.app` |
-| Database | SQLite (`data/chat.db`) | PostgreSQL (persistent) |
-| SDK Connections | In-memory (lost on restart) | In-memory (lost on redeploy) |
-
-## Limitations (Current)
-
-- **No auth** - Public endpoint
-- **Single instance** - No horizontal scaling
-- **SDK context resets** - Chat history persists in PostgreSQL, but Claude's internal conversation context resets on redeploy (SDK limitation)
-
-## Future Improvements
-
-- [x] PostgreSQL for chat persistence (implemented)
-- [ ] SDK session resumption (cross-restart context persistence)
-- [ ] Add API key authentication
-- [ ] Custom domain setup
-
 ## Useful Commands
 
 ```bash
@@ -136,10 +117,20 @@ railway service list
 
 # Open dashboard
 railway open
+
+# Connect to Postgres directly
+PGPASSWORD=<password> psql -h turntable.proxy.rlwy.net -U postgres -p 41317 -d railway
 ```
+
+## Limitations
+
+- **No auth** - Public endpoint
+- **Single instance** - No horizontal scaling
+- **SDK context resets** - Chat history persists, but Claude's context resets on redeploy
 
 ## References
 
 - [Railway Docs](https://docs.railway.com/)
 - [Railway CLI](https://docs.railway.com/guides/cli)
 - [Application Spec](spec.md)
+- [Database Setup](db_setup.md)
