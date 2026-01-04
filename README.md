@@ -64,7 +64,6 @@ make filter
 
 # View results
 make targets         # Show pending jobs with priority breakdown
-make review          # Interactive review of borderline jobs (optional)
 make inspect         # Full database overview
 make analyze         # Job data analysis
 
@@ -93,13 +92,11 @@ python3 src/outreach/prepare_outreach.py
    - 299 pending new grad positions identified (4.22% pass rate)
    - Direct API access: `https://api.ashbyhq.com/posting-api/job-board/{company}`
 
-2. **Simplify Jobs GitHub** (Prospective - Manual)
+2. **Simplify Jobs GitHub** (Prospective)
    - Repository: [SimplifyJobs/New-Grad-Positions](https://github.com/SimplifyJobs/New-Grad-Positions)
-   - 587 unique companies extracted (572 new, 15 already in DB)
    - Updated daily by Simplify team
-   - Output: `data/prospective_companies.txt`
-   - Command: `make simplify` to refresh
    - **Use case:** Discovery of new companies to add to scraping pipeline
+   - See `src/discovery/poc_aggregators/simplify_aggregator.py` for ATS-aware extraction
 
 **Future Sources:**
 - Y Combinator Work at a Startup (1000+ companies)
@@ -138,14 +135,12 @@ justin-job-apps/
 ├── src/                  # Source code
 │   ├── scrapers/         # Job scraping & loading
 │   │   ├── ashby_scraper.py       # Ashby ATS API scraper
-│   │   ├── simplify_scraper.py    # Simplify Jobs GitHub scraper
 │   │   ├── ats_mapper.py          # Dynamic ATS field mapping
 │   │   ├── ats_mappings.json      # ATS platform configs
 │   │   └── load_jobs.py           # Main job loading pipeline
 │   │
-│   ├── filters/          # Job filtering & validation
-│   │   ├── filter_jobs.py        # Claude API filtering (new grad only)
-│   │   └── validate_targets.py   # Re-validate pending jobs
+│   ├── filters/          # Job filtering
+│   │   └── filter_jobs.py        # Two-stage AI filtering (Haiku + Sonnet)
 │   │
 │   ├── discovery/        # Contact discovery
 │   │   └── discover_contacts.py  # Google/LinkedIn contact search
@@ -185,25 +180,16 @@ justin-job-apps/
 
 **How it works:**
 - `ashby_scraper.py` - Hits public Ashby API with intelligent slug resolution
-  - **3-pass approach**: original slug → simple variations → batched AI suggestions
-  - Uses Claude Haiku (cheapest model) for batch slug resolution on 404 errors
+  - **2-pass approach**: original slug → simple variations
   - Example: "Hims & Hers" → auto-resolves to "hims-and-hers"
-- `slug_resolver.py` - Batched slug resolution using Claude Haiku (NEW)
-  - Makes ONE API call for all failed companies (efficient)
-  - Tries simple patterns first (free), AI as fallback
-- `simplify_scraper.py` - Extracts companies from Simplify Jobs GitHub repo (prospecting tool)
 - `ats_mapper.py` - Dynamic field mapping system (learn schema once per platform, reuse for all companies)
 - `load_jobs.py` - Main pipeline to load jobs into database
 
 **Key Decisions:**
 - Direct ATS API > web scraping (clean JSON, no HTML parsing, reliable structure)
-- Simplify Jobs as discovery source > manual company research (curated list, daily updates)
-- Batched AI slug resolution > per-company API calls (cost-efficient, faster)
 
 **Status:**
 - ✅ Ashby: 7,124 jobs loaded from 305 companies (with auto slug resolution)
-- ✅ Simplify: 572 new prospective companies identified (run `make simplify`)
-- ✅ Slug resolver: Handles tricky company names automatically
 
 ### 2. Job Filtering (`src/filters/`)
 
@@ -360,14 +346,10 @@ FROM target_jobs;
 ```bash
 make init        # Initialize database with schema
 make load        # Load all Ashby jobs into database
-make simplify    # Extract prospective companies from Simplify Jobs GitHub
 make inspect     # Display database contents (companies, jobs, targets)
 make targets     # Show filtered jobs statistics and sample
 make analyze     # Analyze job data (locations, titles, keywords)
-make filter      # Filter jobs with Claude API (strict new grad)
-make validate    # Re-validate pending jobs with strict criteria
-make costs       # 💰 Show Claude API costs breakdown
-make duplicates  # Show duplicate detection report
+make filter      # Filter jobs with two-stage AI (Haiku + Sonnet)
 make purge       # Delete all data (keeps schema)
 make clean       # Delete entire database file
 ```

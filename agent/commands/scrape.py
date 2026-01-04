@@ -4,17 +4,23 @@ Scrape command - fetch jobs from ATS platforms.
 Usage:
     /scrape ashby [--force]               - Fetch jobs from all Ashby companies
     /scrape ashby <company> [company...]  - Fetch jobs from specific companies
-    /scrape simplify                      - Refresh prospective companies from GitHub
+    /scrape aggregator <name>             - Discover companies from aggregator (simplify, yc)
 """
 
 from datetime import datetime, timezone
 from . import register
 
 
+AGGREGATORS = {
+    'simplify': 'simplify_aggregator',
+    'yc': 'yc_aggregator',
+}
+
+
 @register(
     "scrape",
     description="Fetch jobs from ATS platforms",
-    usage="/scrape ashby [--force] | /scrape ashby <company>... | /scrape simplify"
+    usage="/scrape ashby [--force] | /scrape aggregator <name>"
 )
 async def handle_scrape(args: str):
     """Handle /scrape command."""
@@ -22,7 +28,7 @@ async def handle_scrape(args: str):
     source = parts[0].lower() if parts else ""
 
     if not source:
-        yield {"type": "error", "text": "Usage: /scrape ashby [--force] | /scrape simplify"}
+        yield {"type": "error", "text": "Usage: /scrape ashby [--force] | /scrape aggregator <name>"}
         return
 
     if source == "ashby":
@@ -31,11 +37,12 @@ async def handle_scrape(args: str):
         companies = [p for p in parts[1:] if p != "--force"]
         async for event in scrape_ashby(companies, force=force):
             yield event
-    elif source == "simplify":
-        async for event in scrape_simplify():
+    elif source == "aggregator":
+        name = parts[1].lower() if len(parts) > 1 else ""
+        async for event in scrape_aggregator(name):
             yield event
     else:
-        yield {"type": "error", "text": f"Unknown source: {source}. Use 'ashby' or 'simplify'"}
+        yield {"type": "error", "text": f"Unknown source: {source}. Use 'ashby' or 'aggregator'"}
 
 
 async def scrape_ashby(companies: list[str], force: bool = False):
@@ -241,19 +248,35 @@ async def scrape_ashby(companies: list[str], force: bool = False):
     }
 
 
-async def scrape_simplify():
-    """Scrape prospective companies from Simplify Jobs GitHub."""
-    yield {"type": "progress", "text": "Fetching Simplify Jobs README from GitHub..."}
+async def scrape_aggregator(name: str):
+    """Discover companies from an aggregator source.
+
+    Args:
+        name: Aggregator name (simplify, yc, wellfound)
+    """
+    if not name:
+        yield {"type": "error", "text": f"Usage: /scrape aggregator <name>\nAvailable: {', '.join(AGGREGATORS.keys())}"}
+        return
+
+    if name not in AGGREGATORS:
+        yield {"type": "error", "text": f"Unknown aggregator: {name}. Available: {', '.join(AGGREGATORS.keys())}"}
+        return
+
+    module_name = AGGREGATORS[name]
+    yield {"type": "progress", "text": f"Running {name} aggregator..."}
 
     try:
-        from scrapers import simplify_scraper
+        import importlib
         from io import StringIO
         from contextlib import redirect_stdout
+
+        # Import the aggregator module
+        module = importlib.import_module(f"discovery.aggregators.{module_name}")
 
         # Capture output from main()
         captured = StringIO()
         with redirect_stdout(captured):
-            simplify_scraper.main()
+            module.main()
 
         # Stream captured output
         captured.seek(0)
@@ -262,9 +285,9 @@ async def scrape_simplify():
             if line:
                 yield {"type": "progress", "text": line}
 
-        yield {"type": "done", "text": "Simplify scrape complete. Check data/prospective_companies.txt"}
+        yield {"type": "done", "text": f"{name} aggregator complete"}
 
     except ImportError as e:
-        yield {"type": "error", "text": f"Failed to import scraper: {e}"}
+        yield {"type": "error", "text": f"Failed to import {module_name}: {e}"}
     except Exception as e:
-        yield {"type": "error", "text": f"Scrape failed: {e}"}
+        yield {"type": "error", "text": f"Aggregator failed: {e}"}

@@ -1,21 +1,26 @@
 #!/usr/bin/env python3
 """
-Google Dorking for ATS Platform Discovery
+ATS Company Discovery via Google Dorking
 
-Discovers companies on major ATS platforms using Google Custom Search API.
-Saves raw results and extracts company information for database insertion.
+Discovers companies on ATS platforms using Google Custom Search API
+and inserts directly into database.
+
+Usage:
+    python3 dork_ats.py --ats ashbyhq
+    python3 dork_ats.py --ats lever --start-page 3
+    python3 dork_ats.py --ats greenhouse --max-pages 10
 """
 
+import argparse
 import os
 import sys
 import json
+import sqlite3
 import requests
-import time
+import re
 from datetime import datetime
 from pathlib import Path
-
-# Add project root to path for imports
-sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from dotenv import load_dotenv
 load_dotenv()
@@ -24,22 +29,23 @@ load_dotenv()
 ATS_PLATFORMS = {
     'ashbyhq': {
         'search_query': 'site:jobs.ashbyhq.com',
-        'url_pattern': 'jobs.ashbyhq.com/',
+        'url_pattern': r'jobs\.ashbyhq\.com/([^/\?#]+)',
         'base_url': 'https://jobs.ashbyhq.com/'
     },
     'lever': {
         'search_query': 'site:jobs.lever.co',
-        'url_pattern': 'jobs.lever.co/',
+        'url_pattern': r'jobs\.lever\.co/([^/\?#]+)',
         'base_url': 'https://jobs.lever.co/'
     },
     'greenhouse': {
         'search_query': 'site:boards.greenhouse.io',
-        'url_pattern': 'boards.greenhouse.io/',
+        'url_pattern': r'boards\.greenhouse\.io/([^/\?#]+)',
         'base_url': 'https://boards.greenhouse.io/'
     }
 }
 
-# Output directory for raw JSON results
+# Paths
+DB_PATH = Path(__file__).parent.parent.parent / 'data' / 'jobs.db'
 OUTPUT_DIR = Path(__file__).parent.parent.parent / 'data' / 'dork_results'
 OUTPUT_DIR.mkdir(exist_ok=True)
 
@@ -47,61 +53,88 @@ OUTPUT_DIR.mkdir(exist_ok=True)
 GOOGLE_API_KEY = os.getenv('GOOGLE_API_KEY')
 GOOGLE_CSE_ID = os.getenv('GOOGLE_CSE_ID')
 
-if not GOOGLE_API_KEY or not GOOGLE_CSE_ID:
-    print("Error: GOOGLE_API_KEY and GOOGLE_CSE_ID must be set in .env file")
-    sys.exit(1)
+# Parallelization settings
+PAGES_PER_BATCH = 5  # Fetch 5 pages in parallel
 
 
-def google_search(query: str, max_pages: int = 3) -> list:
+def check_credentials():
+    """Check that Google API credentials are set."""
+    if not GOOGLE_API_KEY or not GOOGLE_CSE_ID:
+        print("Error: GOOGLE_API_KEY and GOOGLE_CSE_ID must be set in .env file")
+        sys.exit(1)
+
+
+def fetch_single_page(query: str, page: int) -> dict:
     """
-    Execute Google Custom Search API query and paginate through results.
+    Fetch a single page of Google search results.
 
     Args:
         query: Search query string
-        max_pages: Number of pages to fetch (each page = 10 results, 1 API call)
+        page: Page number (1-indexed)
 
     Returns:
-        List of search result items
+        Dict with 'success', 'page', 'items' or 'error'
+    """
+    start_index = (page - 1) * 10 + 1
+
+    try:
+        response = requests.get(
+            'https://www.googleapis.com/customsearch/v1',
+            params={
+                'key': GOOGLE_API_KEY,
+                'cx': GOOGLE_CSE_ID,
+                'q': query,
+                'start': start_index,
+                'num': 10,
+            },
+            timeout=15
+        )
+
+        response.raise_for_status()
+        data = response.json()
+
+        items = data.get('items', [])
+        return {
+            'success': True,
+            'page': page,
+            'items': items,
+            'count': len(items)
+        }
+
+    except requests.exceptions.RequestException as e:
+        return {
+            'success': False,
+            'page': page,
+            'error': str(e),
+            'items': []
+        }
+
+
+def fetch_pages_parallel(query: str, pages: list[int]) -> list[dict]:
+    """
+    Fetch multiple pages in parallel.
+
+    Args:
+        query: Search query string
+        pages: List of page numbers to fetch
+
+    Returns:
+        List of results (success or failure for each page)
     """
     results = []
 
-    # Google CSE API returns max 10 results per request
-    print(f"  Fetching {max_pages} pages ({max_pages * 10} results max)...")
+    with ThreadPoolExecutor(max_workers=PAGES_PER_BATCH) as executor:
+        futures = {
+            executor.submit(fetch_single_page, query, page): page
+            for page in pages
+        }
 
-    for page in range(max_pages):
-        start_index = page * 10 + 1
+        for future in as_completed(futures):
+            result = future.result()
+            results.append(result)
 
-        try:
-            response = requests.get(
-                'https://www.googleapis.com/customsearch/v1',
-                params={
-                    'key': GOOGLE_API_KEY,
-                    'cx': GOOGLE_CSE_ID,
-                    'q': query,
-                    'start': start_index,
-                    'num': 10,  # Max per request
-                },
-                timeout=10
-            )
-
-            response.raise_for_status()
-            data = response.json()
-
-            items = data.get('items', [])
-            if not items:
-                print(f"    No more results at page {page + 1}")
-                break
-
-            results.extend(items)
-            print(f"    Page {page + 1}: {len(items)} results")
-
-            # Rate limiting - be nice to Google
-            time.sleep(0.5)
-
-        except requests.exceptions.RequestException as e:
-            print(f"    Error fetching page {page + 1}: {e}")
-            break
-
+    # Sort by page number for consistent ordering
+    results.sort(key=lambda x: x['page'])
     return results
 
 
@@ -114,129 +147,275 @@ def extract_company_slug(url: str, ats_platform: str) -> str | None:
         https://jobs.lever.co/figma/abc123 -> figma
         https://jobs.ashbyhq.com/openai -> openai
     """
-    import re
-
-    patterns = {
-        'greenhouse': r'boards\.greenhouse\.io/([^/\?#]+)',
-        'lever': r'jobs\.lever\.co/([^/\?#]+)',
-        'ashbyhq': r'jobs\.ashbyhq\.com/([^/\?#]+)',
-    }
-
-    pattern = patterns.get(ats_platform)
-    if not pattern:
-        return None
-
+    pattern = ATS_PLATFORMS[ats_platform]['url_pattern']
     match = re.search(pattern, url)
     if match:
         return match.group(1)
-
     return None
 
 
-def verify_ats_url(url: str) -> bool:
+def process_search_results(ats_platform: str, all_results: list[dict]) -> list[dict]:
     """
-    Verify that an ATS URL is active (returns 200).
-    Uses HEAD request for efficiency.
-    """
-    try:
-        response = requests.head(url, timeout=5, allow_redirects=True)
-        return response.status_code == 200
-    except requests.exceptions.RequestException:
-        return False
+    Process raw Google search results and extract unique companies.
 
-
-def process_search_results(ats_platform: str, search_results: list) -> list:
-    """
-    Process raw Google search results and extract company information.
+    Args:
+        ats_platform: ATS platform name
+        all_results: List of page results from parallel fetch
 
     Returns:
-        List of dicts with company info for database insertion.
+        List of company dicts for database insertion
     """
     companies = []
     slugs_seen = set()
+    base_url = ATS_PLATFORMS[ats_platform]['base_url']
 
-    print(f"  Processing {len(search_results)} results...")
-
-    for result in search_results:
-        url = result.get('link', '')
-
-        # Extract company slug
-        slug = extract_company_slug(url, ats_platform)
-        if not slug:
+    for page_result in all_results:
+        if not page_result['success']:
             continue
 
-        # Skip duplicates
-        if slug in slugs_seen:
-            continue
-        slugs_seen.add(slug)
+        for item in page_result['items']:
+            url = item.get('link', '')
 
-        # Build canonical ATS URL
-        base_url = ATS_PLATFORMS[ats_platform]['base_url']
-        ats_url = f"{base_url}{slug}"
+            # Extract company slug
+            slug = extract_company_slug(url, ats_platform)
+            if not slug:
+                continue
 
-        # Verify URL is active
-        is_active = verify_ats_url(ats_url)
-        status = "✓" if is_active else "✗"
-        print(f"    {status} {slug}")
+            # Skip duplicates
+            if slug in slugs_seen:
+                continue
+            slugs_seen.add(slug)
 
-        companies.append({
-            'company_slug': slug,
-            'ats_platform': ats_platform,
-            'ats_slug': slug,
-            'ats_url': ats_url,
-            'is_active': is_active,
-            'discovery_source': 'google_dork',
-        })
+            # Build canonical ATS URL
+            ats_url = f"{base_url}{slug}"
 
-        time.sleep(0.2)
+            companies.append({
+                'name': slug,
+                'ats_platform': ats_platform,
+                'ats_slug': slug,
+                'ats_url': ats_url,
+                'discovery_source': 'google_dork',
+            })
 
     return companies
 
 
+def insert_companies_batch(companies: list[dict]) -> dict:
+    """
+    Insert a batch of companies into the database.
+
+    Returns:
+        Dict with 'added' and 'skipped' counts
+    """
+    if not companies:
+        return {'added': 0, 'skipped': 0}
+
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+
+    stats = {'added': 0, 'skipped': 0}
+
+    for company in companies:
+        # Check if exists
+        cursor.execute("SELECT id FROM companies WHERE name = ?", (company['name'],))
+        if cursor.fetchone():
+            stats['skipped'] += 1
+        else:
+            # discovered_date uses DEFAULT CURRENT_TIMESTAMP from schema
+            cursor.execute("""
+                INSERT INTO companies (name, discovery_source, ats_platform, ats_slug, ats_url, is_active)
+                VALUES (?, ?, ?, ?, ?, 1)
+            """, (
+                company['name'],
+                company['discovery_source'],
+                company['ats_platform'],
+                company['ats_slug'],
+                company['ats_url'],
+            ))
+            stats['added'] += 1
+
+    conn.commit()
+    conn.close()
+
+    return stats
+
+
+def save_raw_results(ats_platform: str, all_results: list[dict]):
+    """Save raw search results to JSON file for backup."""
+    timestamp = datetime.now().strftime('%Y-%m-%d_%H%M%S')
+    filename = OUTPUT_DIR / f'{ats_platform}_raw_{timestamp}.json'
+
+    # Flatten items from all pages
+    all_items = []
+    for result in all_results:
+        if result['success']:
+            all_items.extend(result['items'])
+
+    with open(filename, 'w') as f:
+        json.dump({
+            'ats_platform': ats_platform,
+            'timestamp': timestamp,
+            'total_items': len(all_items),
+            'items': all_items
+        }, f, indent=2)
+
+    print(f"  Saved raw results to {filename.name}")
+
+
+def dork_ats(ats_platform: str, start_page: int = 1, max_pages: int = 10):
+    """
+    Main dorking function for a single ATS platform.
+
+    Args:
+        ats_platform: ATS platform to dork (ashbyhq, lever, greenhouse)
+        start_page: Page to start from (for resuming)
+        max_pages: Maximum pages to fetch
+    """
+    if ats_platform not in ATS_PLATFORMS:
+        print(f"Error: Unknown ATS platform '{ats_platform}'")
+        print(f"Available: {', '.join(ATS_PLATFORMS.keys())}")
+        sys.exit(1)
+
+    config = ATS_PLATFORMS[ats_platform]
+    query = config['search_query']
+
+    print(f"\n{'='*60}")
+    print(f"Dorking: {ats_platform.upper()}")
+    print(f"Query: {query}")
+    print(f"Pages: {start_page} to {start_page + max_pages - 1}")
+    print(f"{'='*60}\n")
+
+    # Calculate pages to fetch
+    end_page = start_page + max_pages
+    all_pages = list(range(start_page, end_page))
+
+    # Track stats
+    total_stats = {'added': 0, 'skipped': 0, 'api_calls': 0}
+    all_results = []
+    failed_pages = []
+
+    # Process in batches
+    for batch_start in range(0, len(all_pages), PAGES_PER_BATCH):
+        batch_pages = all_pages[batch_start:batch_start + PAGES_PER_BATCH]
+        batch_num = batch_start // PAGES_PER_BATCH + 1
+        total_batches = (len(all_pages) + PAGES_PER_BATCH - 1) // PAGES_PER_BATCH
+
+        print(f"[Batch {batch_num}/{total_batches}] Fetching pages {batch_pages[0]}-{batch_pages[-1]}...")
+
+        # Fetch pages in parallel
+        results = fetch_pages_parallel(query, batch_pages)
+        total_stats['api_calls'] += len(batch_pages)
+
+        # Check for failures
+        batch_failed = [r['page'] for r in results if not r['success']]
+        if batch_failed:
+            failed_pages.extend(batch_failed)
+            for r in results:
+                if not r['success']:
+                    print(f"  ✗ Page {r['page']} failed: {r['error']}")
+
+        # Count successful results
+        successful = [r for r in results if r['success']]
+        total_items = sum(r['count'] for r in successful)
+
+        if not successful:
+            print(f"  ✗ All pages in batch failed")
+            continue
+
+        print(f"  ✓ Fetched {total_items} results from {len(successful)} pages")
+
+        # Process and extract companies
+        companies = process_search_results(ats_platform, results)
+        print(f"  → {len(companies)} unique companies extracted")
+
+        # Insert to database
+        if companies:
+            stats = insert_companies_batch(companies)
+            total_stats['added'] += stats['added']
+            total_stats['skipped'] += stats['skipped']
+            print(f"  → DB: +{stats['added']} added, {stats['skipped']} already exist")
+
+        # Accumulate results for backup
+        all_results.extend(results)
+
+        # Check if we got empty results (end of search)
+        if total_items == 0:
+            print(f"\n  No more results. Stopping early.")
+            break
+
+    # Save raw results backup
+    if all_results:
+        save_raw_results(ats_platform, all_results)
+
+    # Summary
+    print(f"\n{'='*60}")
+    print(f"SUMMARY: {ats_platform}")
+    print(f"{'='*60}")
+    print(f"API calls: {total_stats['api_calls']}")
+    print(f"Companies added: {total_stats['added']}")
+    print(f"Companies skipped (already exist): {total_stats['skipped']}")
+
+    if failed_pages:
+        print(f"\n⚠️  Failed pages: {failed_pages}")
+        print(f"   Resume with: --ats {ats_platform} --start-page {min(failed_pages)}")
+    else:
+        print(f"\n✓ All pages fetched successfully")
+
+
 def main():
-    """Main execution: Dork each ATS platform and save results."""
-    print("Google Dorking - ATS Platform Discovery")
-    print("=" * 60)
+    parser = argparse.ArgumentParser(
+        description='Discover companies on ATS platforms via Google dorking',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  python3 dork_ats.py --ats ashbyhq
+  python3 dork_ats.py --ats lever --max-pages 20
+  python3 dork_ats.py --ats greenhouse --start-page 5
+        """
+    )
 
-    all_companies = []
-    stats = {
-        'api_calls': 0,
-        'companies_discovered': 0,
-        'active_companies': 0,
-    }
+    parser.add_argument(
+        '--ats',
+        required=True,
+        choices=list(ATS_PLATFORMS.keys()),
+        help='ATS platform to dork'
+    )
 
-    # Dork each ATS platform
-    for ats_platform, config in ATS_PLATFORMS.items():
-        print(f"\n{ats_platform.upper()}: {config['search_query']}")
+    parser.add_argument(
+        '--start-page',
+        type=int,
+        default=1,
+        help='Page to start from (default: 1)'
+    )
 
-        # Execute search (3 pages = 3 API calls)
-        search_results = google_search(config['search_query'], max_pages=3)
-        stats['api_calls'] += 3
+    parser.add_argument(
+        '--max-pages',
+        type=int,
+        default=10,
+        help='Maximum pages to fetch (default: 10, which is Google CSE max = 100 results)'
+    )
 
-        # Save raw results
-        raw_file = OUTPUT_DIR / f'{ats_platform}_raw.json'
-        with open(raw_file, 'w') as f:
-            json.dump(search_results, f, indent=2)
+    args = parser.parse_args()
 
-        # Process results
-        companies = process_search_results(ats_platform, search_results)
-        all_companies.extend(companies)
+    # Validate
+    check_credentials()
 
-        active = sum(1 for c in companies if c['is_active'])
-        stats['companies_discovered'] += len(companies)
-        stats['active_companies'] += active
+    if args.start_page < 1:
+        print("Error: --start-page must be >= 1")
+        sys.exit(1)
 
-        print(f"  {len(companies)} companies ({active} active)")
+    if args.max_pages < 1:
+        print("Error: --max-pages must be >= 1")
+        sys.exit(1)
 
-    # Save processed companies
-    companies_file = OUTPUT_DIR / 'companies_discovered.json'
-    with open(companies_file, 'w') as f:
-        json.dump(all_companies, f, indent=2)
+    # Google CSE limit: max 100 results (10 pages)
+    if args.start_page + args.max_pages - 1 > 10:
+        effective_max = max(1, 10 - args.start_page + 1)
+        print(f"Note: Google CSE limits to 100 results (10 pages). Capping to {effective_max} pages.")
+        args.max_pages = effective_max
 
-    print()
-    print(f"Total: {stats['companies_discovered']} companies ({stats['active_companies']} active)")
-    print(f"API calls: {stats['api_calls']} (${stats['api_calls'] * 0.005:.3f})")
-    print(f"Saved to: {companies_file}")
+    # Run
+    dork_ats(args.ats, args.start_page, args.max_pages)
 
 
 if __name__ == '__main__':

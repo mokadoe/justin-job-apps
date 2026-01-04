@@ -290,12 +290,11 @@ make test  # or project-specific command
 
 **Current State:**
 - Database: `data/jobs.db` (local, gitignored) with 5 tables
-- All make commands working, including `make review` for optional manual review
+- All make commands working
 - 299 target jobs ready for outreach (prioritized by location)
 - Optimized architecture: rejected jobs not stored in target_jobs
 
 **Next Steps:**
-- 🔄 Review 299 target jobs (prioritize 151 US jobs first)
 - 📊 Expand contact discovery to all target companies
 - 🎯 Send first batch of 5-10 outreach emails
 - 🔧 Build response tracking system
@@ -306,7 +305,6 @@ make init       # Initialize database
 make load       # Load jobs
 make filter     # Two-stage AI filtering (Haiku + Sonnet)
 make targets    # View results with priority breakdown
-make review     # Interactive review (optional)
 make inspect    # Database overview
 
 # Outreach commands

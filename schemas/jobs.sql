@@ -1,3 +1,14 @@
+-- Company leads table (companies without known ATS - need discovery)
+-- These are prospects that need ATS enrichment before we can scrape jobs
+CREATE TABLE IF NOT EXISTS company_leads (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT UNIQUE NOT NULL,
+    website TEXT,
+    discovery_source TEXT,
+    discovered_date TEXT DEFAULT CURRENT_TIMESTAMP,
+    notes TEXT
+);
+
 -- Companies table
 -- discovery_source: where we found this company (simplify, google, manual)
 -- ats_platform: which ATS they use (ashbyhq, greenhouse, lever) - nullable until enriched
