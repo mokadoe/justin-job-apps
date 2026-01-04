@@ -11,5 +11,32 @@
     "base_url_pattern": "https://jobs.ashbyhq.com/{company}",
     "validated_with": "replit",
     "sample_job_count": 44
+  },
+  "lever": {
+    "platform": "lever",
+    "mapping": {
+      "job_title": "[].text",
+      "job_url": "[].hostedUrl",
+      "location": "[].categories.location",
+      "job_description": "[].descriptionPlain",
+      "posted_date": "[].createdAt"
+    },
+    "base_url_pattern": "https://jobs.lever.co/{company}",
+    "validated_with": "nordsec",
+    "sample_job_count": 134
+  },
+  "greenhouse": {
+    "platform": "greenhouse",
+    "mapping": {
+      "job_title": "jobs[].title",
+      "job_url": "jobs[].absolute_url",
+      "location": "jobs[].location.name",
+      "job_description": "jobs[].content",
+      "posted_date": "jobs[].updated_at"
+    },
+    "base_url_pattern": "https://boards.greenhouse.io/{company}",
+    "validated_with": "stripe_api_test",
+    "sample_job_count": 519,
+    "notes": "Uses smart pre-filter: only fetches descriptions for non-senior engineering jobs"
   }
 }

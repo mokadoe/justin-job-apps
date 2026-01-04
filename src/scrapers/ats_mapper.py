@@ -128,7 +128,7 @@ class ATSMapper:
                 jobs_array_path = path.split('[]')[0]
                 break
 
-        if not jobs_array_path:
+        if jobs_array_path is None:
             # No array notation - single job
             return [self._extract_single_job(api_response, mapping, company_name, ats_platform)]
 
