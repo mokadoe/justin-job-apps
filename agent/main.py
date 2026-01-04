@@ -17,12 +17,15 @@ from claude_agent_sdk import (
     ToolResultBlock,
 )
 import db
+import jobs_db
+from commands import dispatch as dispatch_command, list_commands
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Initialize database on startup."""
+    """Initialize databases on startup."""
     await db.init_db()
+    await jobs_db.init_jobs_db()
     yield
 
 
@@ -224,6 +227,36 @@ async def get_history(session_id: str):
     return {"history": history}
 
 
+@app.get("/commands")
+async def get_commands():
+    """List available slash commands for UI."""
+    return {"commands": list_commands()}
+
+
+@app.post("/command/{session_id}")
+async def run_command(session_id: str, request: Request):
+    """Execute a slash command with SSE progress streaming."""
+    body = await request.json()
+    text = body.get("text", "")
+
+    # Store the command in chat history
+    await db.get_or_create_chat_session(session_id)
+    await db.add_message(session_id, "user", text)
+
+    async def event_stream():
+        result_text = []
+        async for event in dispatch_command(text):
+            event_type = event.get("type", "progress")
+            yield {"event": event_type, "data": json.dumps(event)}
+            result_text.append(event.get("text", ""))
+
+        # Store the result in chat history
+        if result_text:
+            await db.add_message(session_id, "system", "\n".join(result_text))
+
+    return EventSourceResponse(event_stream())
+
+
 HTML = """<!DOCTYPE html>
 <html>
 <head>
@@ -264,12 +297,26 @@ HTML = """<!DOCTYPE html>
         #debug > div { display: flex; align-items: center; gap: 0.4rem; }
         #model-select { background: #1a1a2e; color: #aaa; border: 1px solid #444; border-radius: 4px; padding: 0.15rem 0.3rem; font-size: 0.7rem; font-family: monospace; cursor: pointer; }
         #model-select:focus { outline: none; border-color: #6a6aaa; }
+        /* Commands panel */
+        #commands-panel { border-top: 1px solid #333; padding: 0.5rem; }
+        .panel-header { font-size: 0.75rem; color: #666; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 0.5rem; }
+        .command-item { padding: 0.4rem 0.5rem; margin: 0.25rem 0; background: #1a1a2e; border-radius: 4px; cursor: pointer; font-size: 0.8rem; }
+        .command-item:hover { background: #2a2a4a; }
+        .command-usage { font-family: monospace; color: #8a8aaa; font-size: 0.75rem; }
+        .command-desc { color: #666; font-size: 0.7rem; margin-top: 0.2rem; }
+        /* System message style */
+        .system { background: #1a2a3a; border-left: 3px solid #4a8aaa; font-family: monospace; font-size: 0.85rem; }
+        .system pre { color: #aaccee; }
     </style>
 </head>
 <body>
     <div id="sidebar">
         <button id="new-session" onclick="newSession()">+ New Chat</button>
         <div id="sessions-list"></div>
+        <div id="commands-panel">
+            <div class="panel-header">Commands</div>
+            <div id="commands-list"></div>
+        </div>
     </div>
     <div id="main">
         <div id="chat"></div>
@@ -330,7 +377,8 @@ HTML = """<!DOCTYPE html>
                 if (data.history && data.history.length > 0) {
                     sessionStarted = true;
                     for (const msg of data.history) {
-                        addMsg(msg.content, msg.role === 'user' ? 'user' : 'assistant');
+                        const cls = msg.role === 'user' ? 'user' : (msg.role === 'system' ? 'system' : 'assistant');
+                        addMsg(msg.content, cls);
                     }
                 }
                 // Try to get session's model (may be unknown if server restarted)
@@ -366,9 +414,97 @@ HTML = """<!DOCTYPE html>
             }
         }
 
+        async function loadCommands() {
+            try {
+                const res = await fetch('/commands');
+                const data = await res.json();
+                const container = document.getElementById('commands-list');
+                container.innerHTML = data.commands.map(cmd =>
+                    '<div class="command-item" onclick="fillCommand(\\'' + cmd.usage.split(' ')[0] + ' \\')">' +
+                    '<div class="command-usage">' + cmd.usage + '</div>' +
+                    '<div class="command-desc">' + cmd.description + '</div>' +
+                    '</div>'
+                ).join('');
+            } catch (e) {
+                console.log('Failed to load commands:', e);
+            }
+        }
+
+        function fillCommand(cmd) {
+            promptInput.value = cmd;
+            promptInput.focus();
+        }
+
+        async function runCommand(text) {
+            addMsg(text, 'user');
+            promptInput.value = '';
+            sendBtn.disabled = true;
+            sessionStarted = true;
+
+            // Create system message for progress
+            let systemMsg = null;
+
+            try {
+                const response = await fetch('/command/' + sessionId, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ text: text })
+                });
+
+                if (!response.ok) {
+                    throw new Error('Server error: ' + response.status);
+                }
+
+                const reader = response.body.getReader();
+                const decoder = new TextDecoder();
+                let buffer = '';
+
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+
+                    buffer += decoder.decode(value, { stream: true });
+                    const lines = buffer.split(/\\r?\\n/);
+                    buffer = lines.pop() || '';
+
+                    for (const line of lines) {
+                        if (line.startsWith('data: ')) {
+                            try {
+                                const data = JSON.parse(line.slice(6));
+                                if (data.type === 'progress' || data.type === 'done') {
+                                    if (!systemMsg) {
+                                        systemMsg = addMsg('', 'system');
+                                    }
+                                    const pre = systemMsg.querySelector('pre');
+                                    if (pre.textContent) pre.textContent += '\\n';
+                                    pre.textContent += data.text;
+                                    chat.scrollTop = chat.scrollHeight;
+                                } else if (data.type === 'error') {
+                                    addMsg('Error: ' + data.text, 'error');
+                                }
+                            } catch (e) {
+                                console.log('Parse error:', e, line);
+                            }
+                        }
+                    }
+                }
+                loadSessions(); // Refresh session list
+            } catch (err) {
+                addMsg('Error: ' + err.message, 'error');
+            } finally {
+                sendBtn.disabled = false;
+                promptInput.focus();
+            }
+        }
+
         async function sendMessage() {
             const text = promptInput.value.trim();
             if (!text) return;
+
+            // Route slash commands to command handler
+            if (text.startsWith('/')) {
+                return runCommand(text);
+            }
 
             addMsg(text, 'user');
             promptInput.value = '';
@@ -459,8 +595,8 @@ HTML = """<!DOCTYPE html>
         promptInput.onkeydown = e => { if (e.key === 'Enter') sendMessage(); };
         document.getElementById('session-display').textContent = sessionId.slice(0, 8);
 
-        // Initialize: load models, then history/sessions
-        loadModels().then(() => {
+        // Initialize: load models, commands, then history/sessions
+        Promise.all([loadModels(), loadCommands()]).then(() => {
             if (urlParams.get('session')) {
                 loadHistory().then(loadSessions);
             } else {

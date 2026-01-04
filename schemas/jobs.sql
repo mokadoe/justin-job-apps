@@ -1,8 +1,13 @@
 -- Companies table
+-- discovery_source: where we found this company (simplify, google, manual)
+-- ats_platform: which ATS they use (ashbyhq, greenhouse, lever) - nullable until enriched
+-- ats_slug: the URL-friendly identifier for their careers page
 CREATE TABLE IF NOT EXISTS companies (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT UNIQUE NOT NULL,
-    ats_platform TEXT NOT NULL,
+    discovery_source TEXT DEFAULT 'manual',
+    ats_platform TEXT,
+    ats_slug TEXT,
     ats_url TEXT,
     website TEXT,
     last_scraped TEXT,
@@ -74,6 +79,8 @@ CREATE INDEX IF NOT EXISTS idx_evaluated ON jobs(evaluated);
 CREATE INDEX IF NOT EXISTS idx_posted_date ON jobs(posted_date);
 CREATE INDEX IF NOT EXISTS idx_company_name ON companies(name);
 CREATE INDEX IF NOT EXISTS idx_ats_platform ON companies(ats_platform);
+CREATE INDEX IF NOT EXISTS idx_discovery_source ON companies(discovery_source);
+CREATE INDEX IF NOT EXISTS idx_ats_slug ON companies(ats_slug);
 CREATE INDEX IF NOT EXISTS idx_target_job_id ON target_jobs(job_id);
 CREATE INDEX IF NOT EXISTS idx_status ON target_jobs(status);
 CREATE INDEX IF NOT EXISTS idx_contact_company ON contacts(company_id);
