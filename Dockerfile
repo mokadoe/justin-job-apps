@@ -9,6 +9,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy source code
 COPY src/ ./src/
 COPY agent/ ./agent/
+COPY profile.json ./profile.json
 
 # Add src to Python path so agent can import from it
 ENV PYTHONPATH="/app/src:${PYTHONPATH}"
