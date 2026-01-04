@@ -4,23 +4,27 @@ Scrape command - fetch jobs from ATS platforms.
 Usage:
     /scrape ashby [--force]               - Fetch jobs from all Ashby companies
     /scrape ashby <company> [company...]  - Fetch jobs from specific companies
-    /scrape aggregator <name>             - Discover companies from aggregator (simplify, yc)
+
+    # Aggregators (discover companies - checks ALL for ATS by default)
+    /scrape simplify                      - SimplifyJobs GitHub new grad positions
+    /scrape yc [--check N]                - YC companies (default: probe ALL for ATS)
+    /scrape a16z [--check N]              - a16z portfolio (default: probe ALL for ATS)
+    /scrape manual [--limit N]            - Companies from data/manual_companies.txt
+
+    # Google dorking (discover companies via Google search)
+    /scrape dork <ats>                    - Google dork for ATS (ashbyhq, lever, greenhouse)
+    /scrape dork <ats> [--max-pages N]    - Limit pages (default 10, max 10)
+    /scrape dork <ats> [--start-page N]   - Resume from page N
 """
 
 from datetime import datetime, timezone
 from . import register
 
 
-AGGREGATORS = {
-    'simplify': 'simplify_aggregator',
-    'yc': 'yc_aggregator',
-}
-
-
 @register(
     "scrape",
     description="Fetch jobs from ATS platforms",
-    usage="/scrape ashby [--force] | /scrape aggregator <name>"
+    usage="/scrape ashby | /scrape simplify | /scrape yc | /scrape a16z | /scrape manual | /scrape dork <ats>"
 )
 async def handle_scrape(args: str):
     """Handle /scrape command."""
@@ -28,7 +32,7 @@ async def handle_scrape(args: str):
     source = parts[0].lower() if parts else ""
 
     if not source:
-        yield {"type": "error", "text": "Usage: /scrape ashby [--force] | /scrape aggregator <name>"}
+        yield {"type": "error", "text": "Usage: /scrape <source>\n\nSources: ashby, simplify, yc, a16z, manual, dork"}
         return
 
     if source == "ashby":
@@ -37,12 +41,69 @@ async def handle_scrape(args: str):
         companies = [p for p in parts[1:] if p != "--force"]
         async for event in scrape_ashby(companies, force=force):
             yield event
-    elif source == "aggregator":
-        name = parts[1].lower() if len(parts) > 1 else ""
-        async for event in scrape_aggregator(name):
+
+    elif source == "simplify":
+        async for event in scrape_simplify():
             yield event
+
+    elif source == "yc":
+        # Parse --check N option (default None = check all)
+        check = None
+        for i, opt in enumerate(parts[1:], 1):
+            if opt == "--check" and i < len(parts) - 1:
+                try:
+                    check = int(parts[i + 1])
+                except ValueError:
+                    pass
+        async for event in scrape_yc(check=check):
+            yield event
+
+    elif source == "a16z":
+        # Parse --check N option (default None = check all)
+        max_check = None
+        for i, opt in enumerate(parts[1:], 1):
+            if opt == "--check" and i < len(parts) - 1:
+                try:
+                    max_check = int(parts[i + 1])
+                except ValueError:
+                    pass
+        async for event in scrape_a16z(max_check=max_check):
+            yield event
+
+    elif source == "manual":
+        # Parse --limit N and --force options
+        force = "--force" in parts
+        limit = None
+        for i, opt in enumerate(parts[1:], 1):
+            if opt == "--limit" and i < len(parts) - 1:
+                try:
+                    limit = int(parts[i + 1])
+                except ValueError:
+                    pass
+        async for event in scrape_manual(limit=limit, force=force):
+            yield event
+
+    elif source == "dork":
+        # Parse: /scrape dork <ats> [--max-pages N] [--start-page N]
+        ats = parts[1].lower() if len(parts) > 1 else ""
+        max_pages = 10  # default
+        start_page = 1  # default
+        for i, opt in enumerate(parts[2:], 2):
+            if opt == "--max-pages" and i < len(parts) - 1:
+                try:
+                    max_pages = int(parts[i + 1])
+                except ValueError:
+                    pass
+            elif opt == "--start-page" and i < len(parts) - 1:
+                try:
+                    start_page = int(parts[i + 1])
+                except ValueError:
+                    pass
+        async for event in scrape_dork(ats=ats, max_pages=max_pages, start_page=start_page):
+            yield event
+
     else:
-        yield {"type": "error", "text": f"Unknown source: {source}. Use 'ashby' or 'aggregator'"}
+        yield {"type": "error", "text": f"Unknown source: {source}. Use: ashby, simplify, yc, a16z, manual, dork"}
 
 
 async def scrape_ashby(companies: list[str], force: bool = False):
@@ -248,35 +309,30 @@ async def scrape_ashby(companies: list[str], force: bool = False):
     }
 
 
-async def scrape_aggregator(name: str):
-    """Discover companies from an aggregator source.
+async def _run_aggregator(name: str, **options):
+    """Run an aggregator and yield progress events.
 
     Args:
-        name: Aggregator name (simplify, yc, wellfound)
+        name: Aggregator name (simplify, yc, a16z, manual)
+        **options: Aggregator-specific options
     """
-    if not name:
-        yield {"type": "error", "text": f"Usage: /scrape aggregator <name>\nAvailable: {', '.join(AGGREGATORS.keys())}"}
-        return
-
-    if name not in AGGREGATORS:
-        yield {"type": "error", "text": f"Unknown aggregator: {name}. Available: {', '.join(AGGREGATORS.keys())}"}
-        return
-
-    module_name = AGGREGATORS[name]
     yield {"type": "progress", "text": f"Running {name} aggregator..."}
 
     try:
-        import importlib
         from io import StringIO
         from contextlib import redirect_stdout
+        import sys
+        from pathlib import Path
+        # Add project root to path for src imports
+        project_root = Path(__file__).parent.parent.parent
+        if str(project_root) not in sys.path:
+            sys.path.insert(0, str(project_root))
+        from src.discovery.aggregators.run import run_aggregator
 
-        # Import the aggregator module
-        module = importlib.import_module(f"discovery.aggregators.{module_name}")
-
-        # Capture output from main()
+        # Capture output from run_aggregator
         captured = StringIO()
         with redirect_stdout(captured):
-            module.main()
+            run_aggregator(name, **options)
 
         # Stream captured output
         captured.seek(0)
@@ -288,6 +344,104 @@ async def scrape_aggregator(name: str):
         yield {"type": "done", "text": f"{name} aggregator complete"}
 
     except ImportError as e:
-        yield {"type": "error", "text": f"Failed to import {module_name}: {e}"}
+        yield {"type": "error", "text": f"Failed to import aggregator runner: {e}"}
     except Exception as e:
         yield {"type": "error", "text": f"Aggregator failed: {e}"}
+
+
+async def scrape_simplify():
+    """Discover companies from SimplifyJobs GitHub new grad positions."""
+    async for event in _run_aggregator('simplify'):
+        yield event
+
+
+async def scrape_yc(check: int = None):
+    """Discover companies from Y Combinator.
+
+    Args:
+        check: Number of companies to probe for ATS. None = check ALL (default).
+    """
+    async for event in _run_aggregator('yc', check=check):
+        yield event
+
+
+async def scrape_a16z(max_check: int = None):
+    """Discover companies from a16z portfolio.
+
+    Args:
+        max_check: Maximum number of companies to probe for ATS. None = check ALL (default).
+    """
+    async for event in _run_aggregator('a16z', max_check=max_check):
+        yield event
+
+
+async def scrape_manual(limit: int = None, force: bool = False):
+    """Discover companies from data/manual_companies.txt.
+
+    Args:
+        limit: Maximum number of companies to process
+        force: Re-check existing companies (ignored - runner handles deduplication)
+    """
+    async for event in _run_aggregator('manual', limit=limit, force=force):
+        yield event
+
+
+async def scrape_dork(ats: str = "", max_pages: int = 10, start_page: int = 1):
+    """Discover companies via Google dorking on ATS platforms.
+
+    Args:
+        ats: ATS platform (ashbyhq, lever, greenhouse)
+        max_pages: Maximum pages to fetch (default 10, max 10 due to Google CSE limits)
+        start_page: Page to start from (for resuming)
+    """
+    valid_ats = ['ashbyhq', 'lever', 'greenhouse']
+
+    if not ats:
+        yield {"type": "info", "text": "Google Dork - Discover companies via Google Custom Search"}
+        yield {"type": "info", "text": "\nUsage: /scrape dork <ats> [--max-pages N] [--start-page N]"}
+        yield {"type": "info", "text": f"\nATS platforms: {', '.join(valid_ats)}"}
+        yield {"type": "info", "text": "\nExamples:"}
+        yield {"type": "info", "text": "  /scrape dork ashbyhq"}
+        yield {"type": "info", "text": "  /scrape dork lever --max-pages 5"}
+        yield {"type": "info", "text": "  /scrape dork greenhouse --start-page 3"}
+        return
+
+    if ats not in valid_ats:
+        yield {"type": "error", "text": f"Unknown ATS: {ats}. Use: {', '.join(valid_ats)}"}
+        return
+
+    # Cap max_pages to Google CSE limit
+    if start_page + max_pages - 1 > 10:
+        max_pages = max(1, 10 - start_page + 1)
+        yield {"type": "progress", "text": f"Note: Google CSE limits to 10 pages. Capped to {max_pages} pages."}
+
+    yield {"type": "progress", "text": f"Running Google dork for {ats}..."}
+
+    try:
+        from io import StringIO
+        from contextlib import redirect_stdout
+        from discovery.dork_ats import dork_ats, check_credentials
+
+        # Check credentials first
+        check_credentials()
+
+        # Capture output from dork_ats
+        captured = StringIO()
+        with redirect_stdout(captured):
+            dork_ats(ats, start_page=start_page, max_pages=max_pages)
+
+        # Stream captured output
+        captured.seek(0)
+        for line in captured:
+            line = line.rstrip()
+            if line:
+                yield {"type": "progress", "text": line}
+
+        yield {"type": "done", "text": f"Google dork for {ats} complete"}
+
+    except SystemExit as e:
+        yield {"type": "error", "text": "Missing Google API credentials. Set GOOGLE_API_KEY and GOOGLE_CSE_ID in .env"}
+    except ImportError as e:
+        yield {"type": "error", "text": f"Failed to import dork module: {e}"}
+    except Exception as e:
+        yield {"type": "error", "text": f"Dork failed: {e}"}

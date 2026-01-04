@@ -310,13 +310,13 @@ make test  # or project-specific command
 **Key Commands:**
 ```bash
 make init       # Initialize database
+make simplify   # Discover companies from SimplifyJobs
 make load       # Load jobs
 make filter     # Two-stage AI filtering (Haiku + Sonnet)
 make targets    # View results with priority breakdown
 make inspect    # Database overview
 
 # Outreach commands
-python3 src/discovery/discover_contacts.py
 python3 src/outreach/prepare_outreach.py
 ```
 

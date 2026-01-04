@@ -14,6 +14,11 @@ help:
 	@echo "  make clean     - Delete database file completely"
 	@echo "  make test      - Run all tests"
 	@echo ""
+	@echo "Aggregators (via agent or CLI):"
+	@echo "  python -m src.discovery.aggregators.run --list"
+	@echo "  python -m src.discovery.aggregators.run simplify"
+	@echo ""
+	@echo "Workflow: aggregators -> make load -> make filter -> make targets"
 	@echo "Advanced: python3 src/utils/view.py targets --help"
 
 init:

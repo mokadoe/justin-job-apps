@@ -215,10 +215,8 @@ else:
 ### Discovery
 | File | Changes |
 |------|---------|
-| `src/discovery/discover_contacts.py` | 6 connections, GROUP BY fix for PostgreSQL |
 | `src/discovery/dork_ats.py` | 1 connection |
-| `src/discovery/aggregators/simplify_aggregator.py` | 1 connection |
-| `src/discovery/aggregators/yc_aggregator.py` | 1 connection |
+| `src/discovery/aggregators/run.py` | 2 connections (store_companies, queue_jobs) |
 
 ### Outreach
 | File | Changes |

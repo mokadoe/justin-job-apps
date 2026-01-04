@@ -593,7 +593,6 @@ def main():
 
     if not company or not contact:
         print("\n✗ No companies with priority contacts found.")
-        print("Run contact discovery first: python3 src/discovery/discover_contacts.py")
         return
 
     print(f"\n✓ Selected company: {company['name']}")

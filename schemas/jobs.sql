@@ -1,17 +1,7 @@
--- Company leads table (companies without known ATS - need discovery)
--- These are prospects that need ATS enrichment before we can scrape jobs
-CREATE TABLE IF NOT EXISTS company_leads (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    name TEXT UNIQUE NOT NULL,
-    website TEXT,
-    discovery_source TEXT,
-    discovered_date TEXT DEFAULT CURRENT_TIMESTAMP,
-    notes TEXT
-);
-
 -- Companies table
+-- ats_platform = 'unknown' indicates leads that need ATS discovery
 -- discovery_source: where we found this company (simplify, google, manual)
--- ats_platform: which ATS they use (ashbyhq, greenhouse, lever) - nullable until enriched
+-- ats_platform: which ATS they use (ashbyhq, greenhouse, lever, unknown)
 -- ats_slug: the URL-friendly identifier for their careers page
 -- employee_count: number of employees (from LinkedIn or manual entry)
 -- employee_count_source: 'linkedin', 'manual', 'job_proxy' (how we got the count)
@@ -31,6 +21,7 @@ CREATE TABLE IF NOT EXISTS companies (
 );
 
 -- Jobs table
+-- source: 'ats_scrape' (default), 'simplify', 'linkedin', etc.
 CREATE TABLE IF NOT EXISTS jobs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     company_id INTEGER NOT NULL,
@@ -41,6 +32,7 @@ CREATE TABLE IF NOT EXISTS jobs (
     posted_date TEXT,
     evaluated BOOLEAN DEFAULT 0,
     discovered_date TEXT DEFAULT CURRENT_TIMESTAMP,
+    source TEXT DEFAULT 'ats_scrape',
     FOREIGN KEY (company_id) REFERENCES companies(id)
 );
 

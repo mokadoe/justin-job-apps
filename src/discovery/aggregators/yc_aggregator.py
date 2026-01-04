@@ -1,247 +1,114 @@
-#!/usr/bin/env python3
 """
-Y Combinator Company Directory Aggregator - PoC
+Y Combinator Company Directory Aggregator
 
-Uses YC's Algolia API to fetch all YC companies:
-https://www.ycombinator.com/companies
+Uses yc-oss API (https://github.com/yc-oss/api) to fetch all YC companies.
+This is a static JSON file updated daily with 5,598+ companies.
 
 YC companies are high-quality targets:
 - Well-funded startups (5,598 companies)
 - Strong engineering culture
 - New grad friendly (many early stage)
+
+Note: yc-oss only provides company names and websites, no job URLs.
+We probe ATS APIs to discover which platforms companies use.
 """
 
-import sys
-import re
 import requests
-from pathlib import Path
-from urllib.parse import urlparse
-import time
 
-sys.path.insert(0, str(Path(__file__).parent.parent.parent))
-from scrapers.ats_utils import extract_slug_from_ats_url
-
-# Add utils to path for db import
-sys.path.insert(0, str(Path(__file__).parent.parent.parent / "utils"))
-from db import get_connection, is_remote
+from .types import CompanyLead, AggregatorResult
+from .utils import probe_companies_parallel, SUPPORTED_ATS
 
 
-def _placeholder():
-    """Return SQL placeholder for current database."""
-    return "%s" if is_remote() else "?"
-
-# YC uses Algolia to serve company data
-ALGOLIA_APP_ID = "45BWZJ1SGC"
-ALGOLIA_API_KEY = "MjBjYjRiMzY0NzdhZWY0NjExY2NhZjYxMGIxYjc2MTAwNWFkNTkwNTc4NjgxYjU0YzFhYTY2ZGQ5OGY5NDMxZnJlc3RyaWN0SW5kaWNlcz0lNUIlMjJZQ0NvbXBhbnlfcHJvZHVjdGlvbiUyMiUyQyUyMllDQ29tcGFueV9CeV9MYXVuY2hfRGF0ZV9wcm9kdWN0aW9uJTIyJTVEJnRhZ0ZpbHRlcnM9JTVCJTIyeWNkY19wdWJsaWMlMjIlNUQmYW5hbHl0aWNzVGFncz0lNUIlMjJ5Y2RjJTIyJTVE"
-ALGOLIA_INDEX = "YCCompany_production"
-ALGOLIA_URL = f"https://{ALGOLIA_APP_ID}-dsn.algolia.net/1/indexes/{ALGOLIA_INDEX}/query"
-
-# ATS platform detection patterns
-ATS_PATTERNS = {
-    'greenhouse': ['greenhouse.io', 'boards.greenhouse.io'],
-    'lever': ['lever.co', 'jobs.lever.co'],
-    'ashbyhq': ['ashbyhq.com', 'jobs.ashbyhq.com'],
-    'workday': ['myworkdayjobs.com', 'wd1.myworkdayjobs.com', 'wd5.myworkdayjobs.com'],
-    'icims': ['icims.com'],
-    'smartrecruiters': ['smartrecruiters.com', 'jobs.smartrecruiters.com'],
-    'jobvite': ['jobvite.com'],
-    'taleo': ['taleo.net'],
-}
-
-SUPPORTED_ATS = {'greenhouse', 'lever', 'ashbyhq'}
+YC_OSS_API_URL = "https://yc-oss.github.io/api/companies/all.json"
 
 
-def detect_ats_from_url(job_url: str) -> tuple[str, str]:
-    """Detect ATS platform from job URL."""
-    parsed = urlparse(job_url)
-    domain = parsed.netloc.lower()
+class YCAggregator:
+    """Aggregator for Y Combinator companies via yc-oss API."""
 
-    for ats_platform, patterns in ATS_PATTERNS.items():
-        for pattern in patterns:
-            if pattern in domain:
-                if ats_platform == 'greenhouse':
-                    match = re.search(r'greenhouse\.io/([^/]+)', job_url)
-                    if match:
-                        return ats_platform, f"https://boards.greenhouse.io/{match.group(1)}"
+    name = 'yc'
 
-                elif ats_platform == 'lever':
-                    match = re.search(r'lever\.co/([^/]+)', job_url)
-                    if match:
-                        return ats_platform, f"https://jobs.lever.co/{match.group(1)}"
+    def __init__(self, check_ats_count: int = None):
+        """
+        Initialize YC aggregator.
 
-                elif ats_platform == 'ashbyhq':
-                    match = re.search(r'ashbyhq\.com/([^/]+)', job_url)
-                    if match:
-                        return ats_platform, f"https://jobs.ashbyhq.com/{match.group(1)}"
+        Args:
+            check_ats_count: Number of companies to probe for ATS platforms.
+                            Default None = check ALL companies.
+                            Set to 0 to skip ATS detection.
+        """
+        self.check_ats_count = check_ats_count  # None means check all
 
-                else:
-                    return ats_platform, job_url
+    def fetch(self) -> AggregatorResult:
+        """
+        Fetch YC companies from yc-oss API.
 
-    return 'unknown', job_url
-
-
-def fetch_yc_companies():
-    """
-    Fetch all YC companies using their Algolia API.
-
-    Returns:
-        List of (company_name, website_url) tuples
-    """
-    print("Fetching YC companies from Algolia API...")
-
-    headers = {
-        "X-Algolia-Application-Id": ALGOLIA_APP_ID,
-        "X-Algolia-API-Key": ALGOLIA_API_KEY,
-        "Content-Type": "application/json"
-    }
-
-    companies_data = []
-    page = 0
-    hits_per_page = 1000
-
-    while True:
-        # Fetch paginated results
-        data = {
-            "query": "",
-            "hitsPerPage": hits_per_page,
-            "page": page
-        }
-
-        response = requests.post(ALGOLIA_URL, headers=headers, json=data)
+        Returns:
+            AggregatorResult with companies (no job leads - yc-oss doesn't have job URLs)
+        """
+        print("Fetching YC companies from yc-oss API...")
+        print(f"  URL: {YC_OSS_API_URL}")
+        response = requests.get(YC_OSS_API_URL, timeout=30)
         response.raise_for_status()
-        result = response.json()
+        raw_data = response.json()
+        print(f"  ✓ Downloaded {len(raw_data):,} companies")
 
-        hits = result.get('hits', [])
-        if not hits:
-            break
+        # Extract company names and websites
+        company_data = {}
+        for item in raw_data:
+            name = item.get('name')
+            if name:
+                company_data[name] = (item.get('website') or '').strip() or None
 
-        for hit in hits:
-            company_name = hit.get('name')
-            website = hit.get('website', '').strip()
+        company_names = list(company_data.keys())
 
-            if company_name and website:
-                companies_data.append((company_name, website))
+        # Determine probing limit
+        if self.check_ats_count == 0:
+            print("\nSkipping ATS probing (--check 0)")
+            probe_results = []
+            ats_counts = {}
+        else:
+            # Use parallel probing
+            probe_results, ats_counts = probe_companies_parallel(
+                company_names,
+                max_workers=30,
+                progress_every=100,
+                limit=self.check_ats_count,
+            )
 
-        print(f"  Fetched page {page + 1}: {len(hits)} companies")
+        # Build company leads
+        # First, create a lookup from probe results
+        probe_lookup = {r.company_name: r for r in probe_results}
 
-        # Check if there are more pages
-        if page >= result.get('nbPages', 0) - 1:
-            break
+        companies = []
+        for name in company_names:
+            website = company_data[name]
 
-        page += 1
-        time.sleep(0.5)  # Be respectful with API calls
-
-    print(f"\nTotal YC companies fetched: {len(companies_data)}")
-    return companies_data
-
-
-def try_ats_detection(company_name: str, website: str) -> tuple[str, str]:
-    """
-    Try to detect ATS platform for a company by checking common patterns.
-
-    Args:
-        company_name: Company name
-        website: Company website
-
-    Returns:
-        (ats_platform, ats_url) tuple
-    """
-    # Slugify company name (simple version)
-    slug = company_name.lower().replace(' ', '-').replace('.', '').replace(',', '')
-
-    # Try common ATS patterns
-    ats_patterns = [
-        ('greenhouse', f'https://boards.greenhouse.io/{slug}'),
-        ('lever', f'https://jobs.lever.co/{slug}'),
-        ('ashbyhq', f'https://jobs.ashbyhq.com/{slug}'),
-    ]
-
-    for ats_platform, ats_url in ats_patterns:
-        # Quick HEAD request to check if URL exists
-        try:
-            response = requests.head(ats_url, timeout=2, allow_redirects=True)
-            if response.status_code == 200:
-                return ats_platform, ats_url
-        except:
-            continue
-
-    # If no ATS found, use website as fallback
-    return 'unknown', website
-
-
-def add_companies_to_db(companies_data: list, max_to_check: int = 100):
-    """
-    Add discovered companies to database.
-
-    Args:
-        companies_data: List of (company_name, website) tuples
-        max_to_check: Maximum number of companies to check for ATS
-    """
-    p = _placeholder()
-    stats = {
-        'total': len(companies_data),
-        'added': 0,
-        'skipped_exists': 0,
-        'supported': 0,
-        'unsupported': 0,
-        'checked_ats': 0,
-    }
-
-    print(f"Checking first {max_to_check} companies for ATS...")
-
-    with get_connection() as conn:
-        cursor = conn.cursor()
-
-        for idx, (company_name, website) in enumerate(companies_data):
-            # Only check ATS for first N companies
-            if idx < max_to_check:
-                ats_platform, ats_url = try_ats_detection(company_name, website)
-                stats['checked_ats'] += 1
-                if idx % 10 == 0:
-                    print(f"  {idx}/{max_to_check}...")
+            if name in probe_lookup:
+                result = probe_lookup[name]
+                ats_platform = result.ats_platform
+                ats_url = result.ats_url
             else:
                 ats_platform = 'unknown'
-                ats_url = website
+                ats_url = None
 
-            is_active = 1 if ats_platform in SUPPORTED_ATS else 0
-            ats_slug = extract_slug_from_ats_url(ats_platform, ats_url)
+            companies.append(CompanyLead(
+                name=name,
+                website=website,
+                ats_platform=ats_platform,
+                ats_url=ats_url,
+            ))
 
-            if is_active:
-                stats['supported'] += 1
-            else:
-                stats['unsupported'] += 1
+        # Print ATS breakdown
+        if ats_counts:
+            print(f"\nATS Discovery Results:")
+            for platform, count in sorted(ats_counts.items(), key=lambda x: -x[1]):
+                if platform != 'unknown':
+                    print(f"  ✓ {platform}: {count}")
+            unknown = ats_counts.get('unknown', 0)
+            print(f"  ✗ unknown/none: {unknown}")
 
-            cursor.execute(f"SELECT id FROM companies WHERE name = {p}", (company_name,))
-            existing = cursor.fetchone()
+        supported = sum(1 for c in companies if c.ats_platform in SUPPORTED_ATS)
+        print(f"\nTotal: {len(companies):,} YC companies, {supported} with supported ATS")
 
-            if existing:
-                stats['skipped_exists'] += 1
-            else:
-                cursor.execute(f"""
-                    INSERT INTO companies (name, discovery_source, ats_platform, ats_slug, ats_url, is_active, website)
-                    VALUES ({p}, 'yc', {p}, {p}, {p}, {p}, {p})
-                """, (company_name, ats_platform, ats_slug, ats_url, is_active, website))
-                stats['added'] += 1
-
-        conn.commit()
-
-    return stats
-
-
-def main():
-    print("Y Combinator Aggregator")
-    print("=" * 60)
-
-    # Fetch YC companies from Algolia API
-    companies_data = fetch_yc_companies()
-
-    # Add to database (check ATS for first 100 companies)
-    stats = add_companies_to_db(companies_data, max_to_check=100)
-
-    print()
-    print(f"Total: {stats['total']} | Added: {stats['added']} | Exists: {stats['skipped_exists']}")
-    print(f"Supported: {stats['supported']} | Unsupported: {stats['unsupported']}")
-
-
-if __name__ == "__main__":
-    main()
+        # No job leads - yc-oss doesn't provide job URLs
+        return AggregatorResult(companies=companies, jobs=[])

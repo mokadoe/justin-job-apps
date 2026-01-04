@@ -25,9 +25,10 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from dotenv import load_dotenv
 load_dotenv()
 
-# Add utils to path for db import
-sys.path.insert(0, str(Path(__file__).parent.parent / "utils"))
-from db import get_connection, is_remote
+# Add project root to path for imports
+project_root = Path(__file__).parent.parent.parent
+sys.path.insert(0, str(project_root))
+from src.utils.db import get_connection, is_remote
 
 
 def _placeholder():

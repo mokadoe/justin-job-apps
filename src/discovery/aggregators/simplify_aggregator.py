@@ -1,219 +1,124 @@
-#!/usr/bin/env python3
 """
-Simplify Jobs Aggregator - PoC
+Simplify Jobs Aggregator
 
 Scrapes new grad job listings from SimplifyJobs GitHub repo:
 https://github.com/SimplifyJobs/New-Grad-Positions
 
-Extracts:
-- Company names
-- Job links (to detect ATS platform)
-- Adds companies to database with detected ATS platform
+For supported ATS (Ashby, Greenhouse, Lever):
+- Returns CompanyLead with ATS info for bulk scraping
+
+For unsupported ATS (Workday, Oracle, etc.):
+- Returns JobLead for later Sonnet analysis
 """
 
-import sys
-import re
 import requests
-from pathlib import Path
-from urllib.parse import urlparse
 from bs4 import BeautifulSoup
 
-sys.path.insert(0, str(Path(__file__).parent.parent.parent))
-from scrapers.ats_utils import extract_slug_from_ats_url
-
-# Add utils to path for db import
-sys.path.insert(0, str(Path(__file__).parent.parent.parent / "utils"))
-from db import get_connection, is_remote
-
-
-def _placeholder():
-    """Return SQL placeholder for current database."""
-    return "%s" if is_remote() else "?"
+from .types import CompanyLead, JobLead, AggregatorResult
+from .utils import detect_ats_from_url, extract_clean_website, SUPPORTED_ATS
 
 
 SIMPLIFY_README_URL = "https://raw.githubusercontent.com/SimplifyJobs/New-Grad-Positions/dev/README.md"
 
-# ATS platform detection patterns
-ATS_PATTERNS = {
-    'greenhouse': ['greenhouse.io', 'boards.greenhouse.io'],
-    'lever': ['lever.co', 'jobs.lever.co'],
-    'ashbyhq': ['ashbyhq.com', 'jobs.ashbyhq.com'],
-    'workday': ['myworkdayjobs.com', 'wd1.myworkdayjobs.com', 'wd5.myworkdayjobs.com'],
-    'icims': ['icims.com'],
-    'smartrecruiters': ['smartrecruiters.com', 'jobs.smartrecruiters.com'],
-    'jobvite': ['jobvite.com'],
-    'taleo': ['taleo.net'],
-}
 
-# Supported ATS platforms (will set is_active=1)
-SUPPORTED_ATS = {'greenhouse', 'lever', 'ashbyhq'}
+class SimplifyAggregator:
+    """Aggregator for SimplifyJobs GitHub new grad positions."""
 
+    name = 'simplify'
 
-def detect_ats_from_url(job_url: str) -> tuple[str, str]:
-    """
-    Detect ATS platform from job URL.
+    def fetch(self) -> AggregatorResult:
+        """
+        Fetch companies and job leads from Simplify Jobs README.
 
-    Returns:
-        (ats_platform, ats_url) tuple
-    """
-    parsed = urlparse(job_url)
-    domain = parsed.netloc.lower()
+        Returns:
+            AggregatorResult with:
+            - companies: All discovered companies with ATS info
+            - jobs: Job URLs for unsupported ATS platforms
+        """
+        print("Fetching Simplify Jobs README...")
+        print(f"  URL: {SIMPLIFY_README_URL}")
+        response = requests.get(SIMPLIFY_README_URL, timeout=30)
+        response.raise_for_status()
+        print(f"  ✓ Downloaded ({len(response.text):,} bytes)")
 
-    # Check each ATS pattern
-    for ats_platform, patterns in ATS_PATTERNS.items():
-        for pattern in patterns:
-            if pattern in domain:
-                # Construct base ATS URL
-                if ats_platform == 'greenhouse':
-                    # Extract company slug from URL
-                    match = re.search(r'greenhouse\.io/([^/]+)', job_url)
-                    if match:
-                        company_slug = match.group(1)
-                        return ats_platform, f"https://boards.greenhouse.io/{company_slug}"
+        companies = []
+        jobs = []
+        seen_companies = set()  # Dedupe by company name
+        ats_counts = {}  # Track ATS platform distribution
 
-                elif ats_platform == 'lever':
-                    match = re.search(r'lever\.co/([^/]+)', job_url)
-                    if match:
-                        company_slug = match.group(1)
-                        return ats_platform, f"https://jobs.lever.co/{company_slug}"
+        # Parse markdown table
+        print("Parsing job listings table...")
+        soup = BeautifulSoup(response.text, 'html.parser')
+        rows = soup.find_all('tr')
+        print(f"  Found {len(rows)} table rows")
 
-                elif ats_platform == 'ashbyhq':
-                    match = re.search(r'ashbyhq\.com/([^/]+)', job_url)
-                    if match:
-                        company_slug = match.group(1)
-                        return ats_platform, f"https://jobs.ashbyhq.com/{company_slug}"
-
-                else:
-                    # Unsupported ATS - just return the job URL
-                    return ats_platform, job_url
-
-    # Unknown ATS
-    return 'unknown', job_url
-
-
-def parse_simplify_readme():
-    """
-    Parse Simplify Jobs README to extract companies and job links.
-
-    The README uses HTML table format with:
-    - Company name in: <td><strong><a href="...">Company</a></strong></td>
-    - Job link in: <a href="JOB_URL">Apply button</a>
-
-    Returns:
-        List of (company_name, job_url) tuples
-    """
-    print("Fetching Simplify Jobs README...")
-    response = requests.get(SIMPLIFY_README_URL)
-    response.raise_for_status()
-
-    readme_content = response.text
-
-    # Parse with BeautifulSoup
-    from bs4 import BeautifulSoup
-    soup = BeautifulSoup(readme_content, 'html.parser')
-
-    companies_data = []
-
-    # Find all table rows
-    rows = soup.find_all('tr')
-
-    for row in rows:
-        cells = row.find_all('td')
-        if len(cells) < 4:
-            continue
-
-        # First cell: company name
-        company_cell = cells[0]
-        company_link = company_cell.find('a')
-        if not company_link:
-            # Try getting text directly (some companies don't have links)
-            company_name = company_cell.get_text(strip=True)
-            if not company_name:
+        for row in rows:
+            cells = row.find_all('td')
+            if len(cells) < 4:
                 continue
-        else:
-            company_name = company_link.get_text(strip=True)
 
-        # Fourth cell (index 3): contains apply button with job URL
-        apply_cell = cells[3]
-        apply_links = apply_cell.find_all('a')
+            # Extract company name
+            company_cell = cells[0]
+            company_link = company_cell.find('a')
+            if company_link:
+                company_name = company_link.get_text(strip=True)
+            else:
+                company_name = company_cell.get_text(strip=True)
 
-        for link in apply_links:
-            href = link.get('href', '')
-            # Look for the actual job board URL (not Simplify internal links)
-            if 'simplify.jobs' not in href and href.startswith('http'):
-                companies_data.append((company_name, href))
-                break
+            if not company_name or company_name.lower() in seen_companies:
+                continue
 
-    print(f"Found {len(companies_data)} job listings in Simplify Jobs README")
+            # Extract job URL from apply column
+            apply_cell = cells[3]
+            apply_links = apply_cell.find_all('a')
 
-    return companies_data
+            job_url = None
+            for link in apply_links:
+                href = link.get('href', '')
+                if 'simplify.jobs' not in href and href.startswith('http'):
+                    job_url = href
+                    break
 
+            if not job_url:
+                continue
 
-def add_companies_to_db(companies_data: list):
-    """
-    Add discovered companies to database.
+            seen_companies.add(company_name.lower())
 
-    Args:
-        companies_data: List of (company_name, job_url) tuples
-    """
-    p = _placeholder()
-    stats = {
-        'total': len(companies_data),
-        'added': 0,
-        'skipped_exists': 0,
-        'supported': 0,
-        'unsupported': 0,
-    }
-
-    with get_connection() as conn:
-        cursor = conn.cursor()
-
-        for company_name, job_url in companies_data:
             # Detect ATS platform
             ats_platform, ats_url = detect_ats_from_url(job_url)
-            is_active = 1 if ats_platform in SUPPORTED_ATS else 0
-            ats_slug = extract_slug_from_ats_url(ats_platform, ats_url)
+            website = extract_clean_website(job_url)
 
-            if is_active:
-                stats['supported'] += 1
-            else:
-                stats['unsupported'] += 1
+            # Track ATS distribution
+            ats_counts[ats_platform] = ats_counts.get(ats_platform, 0) + 1
 
-            # Check if company exists
-            cursor.execute(f"SELECT id FROM companies WHERE name = {p}", (company_name,))
-            existing = cursor.fetchone()
+            companies.append(CompanyLead(
+                name=company_name,
+                website=website,
+                ats_platform=ats_platform,
+                ats_url=ats_url,
+            ))
 
-            if existing:
-                stats['skipped_exists'] += 1
-            else:
-                # Insert new company with discovery_source
-                cursor.execute(f"""
-                    INSERT INTO companies (name, discovery_source, ats_platform, ats_slug, ats_url, is_active)
-                    VALUES ({p}, 'simplify', {p}, {p}, {p}, {p})
-                """, (company_name, ats_platform, ats_slug, ats_url, is_active))
-                stats['added'] += 1
-                active_label = "✓" if is_active else "✗"
-                print(f"  {active_label} {company_name} ({ats_platform})")
+            # Queue job URL for unsupported ATS
+            if ats_platform not in SUPPORTED_ATS:
+                jobs.append(JobLead(
+                    company_name=company_name,
+                    job_url=job_url,
+                ))
 
-        conn.commit()
+            # Progress every 50 companies
+            if len(companies) % 50 == 0:
+                print(f"  Parsed {len(companies)} companies...")
 
-    return stats
+        # Print ATS breakdown
+        print(f"\nATS Platform Breakdown:")
+        supported_count = 0
+        for platform, count in sorted(ats_counts.items(), key=lambda x: -x[1]):
+            marker = "✓" if platform in SUPPORTED_ATS else "✗"
+            print(f"  {marker} {platform}: {count}")
+            if platform in SUPPORTED_ATS:
+                supported_count += count
 
-
-def main():
-    print("Simplify Jobs Aggregator")
-    print("=" * 60)
-
-    # Parse Simplify Jobs README
-    companies_data = parse_simplify_readme()
-
-    # Add to database
-    stats = add_companies_to_db(companies_data)
-
-    print()
-    print(f"Total: {stats['total']} | Added: {stats['added']} | Exists: {stats['skipped_exists']}")
-    print(f"Supported: {stats['supported']} | Unsupported: {stats['unsupported']}")
-
-
-if __name__ == "__main__":
-    main()
+        print(f"\nFound {len(companies)} companies total")
+        print(f"  {supported_count} with supported ATS (Ashby/Lever/Greenhouse)")
+        print(f"  {len(jobs)} job leads queued for unsupported ATS")
+        return AggregatorResult(companies=companies, jobs=jobs)

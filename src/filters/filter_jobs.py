@@ -21,13 +21,15 @@ from pathlib import Path
 from anthropic import Anthropic
 from dotenv import load_dotenv
 import sys
-sys.path.insert(0, str(Path(__file__).parent.parent))
-from utils.constants import STATUS_NOT_RELEVANT, STATUS_PENDING
-from utils.db import get_connection, is_remote
+# Add project root to path for imports
+project_root = Path(__file__).parent.parent.parent
+sys.path.insert(0, str(project_root))
+from src.utils.constants import STATUS_NOT_RELEVANT, STATUS_PENDING
+from src.utils.db import get_connection, is_remote
 
 # Cost tracking (optional)
 try:
-    from utils.cost_tracker import track_api_call
+    from src.utils.cost_tracker import track_api_call
 except ImportError:
     # If cost_tracker doesn't exist, use a no-op function
     def track_api_call(*args, **kwargs):

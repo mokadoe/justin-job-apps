@@ -77,8 +77,8 @@ from scrapers.ats_mapper import ATSMapper
 # Import filters
 from filters.filter_jobs import should_reject_with_regex, batch_jobs
 
-# Import discovery
-from discovery.discover_contacts import discover_contacts
+# Import discovery/aggregators
+from discovery.aggregators.run import run_aggregator
 
 # Import outreach
 from outreach.prepare_outreach import generate_message
