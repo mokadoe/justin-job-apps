@@ -88,15 +88,14 @@ def upsert_jobs(cursor, company_id: int, jobs: list) -> dict:
         try:
             job_description = job.get('job_description')
 
-            # Mark jobs without descriptions as pre-rejected
+            # Mark jobs without descriptions as already evaluated (skip filtering)
             evaluated = 1 if not job_description else 0
-            rejection_reason = "No description - pre-filtered" if not job_description else None
 
             # Try to insert, ignore if job_url already exists
             if is_remote():
                 cursor.execute(f'''
-                    INSERT INTO jobs (company_id, job_url, job_title, job_description, location, posted_date, evaluated, rejection_reason)
-                    VALUES ({p}, {p}, {p}, {p}, {p}, {p}, {p}, {p})
+                    INSERT INTO jobs (company_id, job_url, job_title, job_description, location, posted_date, evaluated)
+                    VALUES ({p}, {p}, {p}, {p}, {p}, {p}, {p})
                     ON CONFLICT (job_url) DO NOTHING
                 ''', (
                     company_id,
@@ -106,12 +105,11 @@ def upsert_jobs(cursor, company_id: int, jobs: list) -> dict:
                     job.get('location'),
                     job.get('posted_date'),
                     evaluated,
-                    rejection_reason
                 ))
             else:
                 cursor.execute(f'''
-                    INSERT OR IGNORE INTO jobs (company_id, job_url, job_title, job_description, location, posted_date, evaluated, rejection_reason)
-                    VALUES ({p}, {p}, {p}, {p}, {p}, {p}, {p}, {p})
+                    INSERT OR IGNORE INTO jobs (company_id, job_url, job_title, job_description, location, posted_date, evaluated)
+                    VALUES ({p}, {p}, {p}, {p}, {p}, {p}, {p})
                 ''', (
                     company_id,
                     job.get('job_url'),
@@ -120,7 +118,6 @@ def upsert_jobs(cursor, company_id: int, jobs: list) -> dict:
                     job.get('location'),
                     job.get('posted_date'),
                     evaluated,
-                    rejection_reason
                 ))
 
             if cursor.rowcount > 0:
