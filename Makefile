@@ -1,11 +1,11 @@
-.PHONY: help init load inspect targets analyze filter validate review purge test clean simplify
+.PHONY: help init load inspect targets analyze filter validate review purge test clean simplify costs duplicates
 
 PYTHON := . env/bin/activate && python3
 
 help:
 	@echo "Available commands:"
 	@echo "  make init      - Initialize database with schema"
-	@echo "  make load      - Load all Ashby jobs into database"
+	@echo "  make load      - Load jobs from ALL ATS platforms (Ashby, Lever, Greenhouse)"
 	@echo "  make simplify  - Extract prospective companies from Simplify Jobs GitHub"
 	@echo "  make inspect   - Display all database contents"
 	@echo "  make targets   - Show filtered jobs statistics and company breakdown"
@@ -24,8 +24,8 @@ init:
 	$(PYTHON) src/utils/init_db.py
 
 load:
-	@echo "Loading Ashby jobs into database..."
-	$(PYTHON) src/scrapers/load_jobs.py
+	@echo "Loading jobs from ALL ATS platforms (Ashby, Lever, Greenhouse)..."
+	$(PYTHON) src/scrapers/load_all_jobs.py
 
 simplify:
 	@echo "Extracting companies from Simplify Jobs GitHub repo..."
