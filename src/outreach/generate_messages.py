@@ -12,12 +12,17 @@ This script:
 import sqlite3
 import json
 import os
+import sys
 from pathlib import Path
 from anthropic import Anthropic
 from dotenv import load_dotenv
 from tabulate import tabulate
 
 load_dotenv()
+
+# Add parent directory to path for imports
+sys.path.insert(0, str(Path(__file__).parent.parent))
+from utils.cost_tracker import track_api_call
 
 DB_PATH = Path(__file__).parent.parent.parent / "data" / "jobs.db"
 PROFILE_PATH = Path(__file__).parent.parent.parent / "profile.json"
