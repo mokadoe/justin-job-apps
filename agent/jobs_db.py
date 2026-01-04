@@ -282,14 +282,15 @@ async def get_company_count() -> int:
 async def get_companies_by_platform(ats_platform: str) -> list[dict]:
     """Get all companies for a given ATS platform."""
     async with jobs_session_factory() as db:
+        # Only select columns we need (avoids schema mismatch with Railway)
         result = await db.execute(
-            select(Company)
+            select(Company.id, Company.name, Company.ats_url)
             .where(Company.ats_platform == ats_platform)
             .where(Company.is_active == True)
             .order_by(Company.name)
         )
-        companies = result.scalars().all()
-        return [{"id": c.id, "name": c.name, "ats_url": c.ats_url} for c in companies]
+        rows = result.all()
+        return [{"id": r.id, "name": r.name, "ats_url": r.ats_url} for r in rows]
 
 
 async def get_job_count() -> int:
