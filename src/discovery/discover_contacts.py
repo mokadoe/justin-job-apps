@@ -917,20 +917,23 @@ def store_contact(company_id, name, title, linkedin_url, is_priority, match_conf
         True if inserted, False if already existed
     """
     p = _placeholder()
+    from datetime import datetime, timezone
+    now = datetime.now(timezone.utc).isoformat()
+
     with get_connection() as conn:
         cursor = conn.cursor()
 
         if is_remote():
             cursor.execute(f"""
-                INSERT INTO contacts (company_id, name, title, linkedin_url, is_priority, match_confidence)
-                VALUES ({p}, {p}, {p}, {p}, {p}, {p})
+                INSERT INTO contacts (company_id, name, title, linkedin_url, is_priority, match_confidence, discovered_date)
+                VALUES ({p}, {p}, {p}, {p}, {p}, {p}, {p})
                 ON CONFLICT (company_id, name) DO NOTHING
-            """, (company_id, name, title, linkedin_url, is_priority, match_confidence))
+            """, (company_id, name, title, linkedin_url, is_priority, match_confidence, now))
         else:
             cursor.execute(f"""
-                INSERT OR IGNORE INTO contacts (company_id, name, title, linkedin_url, is_priority, match_confidence)
-                VALUES ({p}, {p}, {p}, {p}, {p}, {p})
-            """, (company_id, name, title, linkedin_url, is_priority, match_confidence))
+                INSERT OR IGNORE INTO contacts (company_id, name, title, linkedin_url, is_priority, match_confidence, discovered_date)
+                VALUES ({p}, {p}, {p}, {p}, {p}, {p}, {p})
+            """, (company_id, name, title, linkedin_url, is_priority, match_confidence, now))
 
         rows_affected = cursor.rowcount
         conn.commit()

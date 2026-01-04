@@ -174,22 +174,26 @@ def store_message(company_id, message_text, company_research):
     Uses INSERT OR REPLACE to update if message already exists.
     """
     p = _placeholder()
+    from datetime import datetime, timezone
+    now = datetime.now(timezone.utc).isoformat()
+
     with get_connection() as conn:
         cursor = conn.cursor()
 
         if is_remote():
             cursor.execute(f"""
-                INSERT INTO messages (company_id, message_text, company_research)
-                VALUES ({p}, {p}, {p})
+                INSERT INTO messages (company_id, message_text, company_research, generated_date)
+                VALUES ({p}, {p}, {p}, {p})
                 ON CONFLICT (company_id) DO UPDATE SET
                     message_text = EXCLUDED.message_text,
-                    company_research = EXCLUDED.company_research
-            """, (company_id, message_text, company_research))
+                    company_research = EXCLUDED.company_research,
+                    generated_date = EXCLUDED.generated_date
+            """, (company_id, message_text, company_research, now))
         else:
             cursor.execute(f"""
-                INSERT OR REPLACE INTO messages (company_id, message_text, company_research)
-                VALUES ({p}, {p}, {p})
-            """, (company_id, message_text, company_research))
+                INSERT OR REPLACE INTO messages (company_id, message_text, company_research, generated_date)
+                VALUES ({p}, {p}, {p}, {p})
+            """, (company_id, message_text, company_research, now))
 
         conn.commit()
 
