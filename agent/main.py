@@ -177,20 +177,29 @@ async def stream_with_heartbeat(session_id: str, prompt: str, model: str = None)
     # Start collecting in background
     events_future = asyncio.ensure_future(collect_response(session_id, prompt, model))
 
-    # Send heartbeats while waiting
-    heartbeat_count = 0
-    while not events_future.done():
-        heartbeat_count += 1
-        dots = "." * ((heartbeat_count % 3) + 1)
-        yield {"event": "thinking", "data": json.dumps({"status": f"thinking{dots}"})}
-        await asyncio.sleep(1.0)
+    # Track the task for abort functionality
+    running_tasks[session_id] = events_future
 
-    # Get the collected events
-    events = await events_future
+    try:
+        # Send heartbeats while waiting
+        heartbeat_count = 0
+        while not events_future.done():
+            heartbeat_count += 1
+            dots = "." * ((heartbeat_count % 3) + 1)
+            yield {"event": "thinking", "data": json.dumps({"status": f"thinking{dots}"})}
+            await asyncio.sleep(1.0)
 
-    # Stream the actual response
-    for event in events:
-        yield event
+        # Get the collected events
+        events = await events_future
+
+        # Stream the actual response
+        for event in events:
+            yield event
+    except asyncio.CancelledError:
+        yield {"event": "error", "data": json.dumps({"error": "Request cancelled"})}
+    finally:
+        # Clean up task tracking
+        running_tasks.pop(session_id, None)
 
 
 @app.post("/chat/{session_id}")
@@ -472,10 +481,17 @@ HTML = """<!DOCTYPE html>
             promptInput.placeholder = running ? 'Running...' : 'Ask Claude...';
         }
 
-        function stopRequest() {
+        async function stopRequest() {
+            // Client-side abort
             if (abortController) {
                 abortController.abort();
                 abortController = null;
+            }
+            // Server-side abort
+            try {
+                await fetch('/session/' + sessionId + '/abort', { method: 'POST' });
+            } catch (e) {
+                console.log('Abort request failed:', e);
             }
             setRunningState(false);
             promptInput.focus();
@@ -863,11 +879,12 @@ HTML = """<!DOCTYPE html>
                 removeLoading(); // Ensure removed if no events
             } catch (err) {
                 loadingMsg.remove();
-                addMsg('Error: ' + err.message, 'error');
+                if (err.name !== 'AbortError') {
+                    addMsg('Error: ' + err.message, 'error');
+                }
             } finally {
-                sendBtn.disabled = false;
-                promptInput.disabled = false;
-                promptInput.placeholder = 'Ask Claude...';
+                abortController = null;
+                setRunningState(false);
                 promptInput.focus();
             }
         }
