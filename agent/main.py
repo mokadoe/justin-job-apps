@@ -4,6 +4,7 @@ import os
 import json
 import asyncio
 from contextlib import asynccontextmanager
+from pathlib import Path
 from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse
 from sse_starlette.sse import EventSourceResponse
@@ -18,12 +19,19 @@ from claude_agent_sdk import (
 )
 import db
 import jobs_db
-from commands import dispatch as dispatch_command, list_commands
+from commands import dispatch as dispatch_command, list_commands, generate_system_prompt, generate_claude_md
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Initialize databases on startup."""
+    """Initialize CLAUDE.md and databases on startup."""
+    # Generate CLAUDE.md before any ClaudeSDKClient is created
+    # This ensures the SDK has up-to-date context about available commands
+    agent_dir = Path(__file__).parent
+    claude_md_path = agent_dir / "CLAUDE.md"
+    claude_md_path.write_text(generate_claude_md())
+    print(f"[Startup] Generated {claude_md_path}")
+
     await db.init_db()
     await jobs_db.init_jobs_db()
     yield
@@ -43,16 +51,18 @@ AVAILABLE_MODELS = [
 ]
 DEFAULT_MODEL = "claude-haiku-4-5-20251001"
 
-
 def get_options(model: str = DEFAULT_MODEL, conversation_history: list[dict] = None):
-    system_prompt = None
+    # Generate system prompt from command registry
+    system_prompt = generate_system_prompt()
+
     if conversation_history:
-        # Format history as context for the new model
+        # Append history context
         history_text = "\n".join([
             f"{'User' if m['role'] == 'user' else 'Assistant'}: {m['content']}"
             for m in conversation_history
         ])
-        system_prompt = f"""You are continuing a conversation. Here is the conversation history so far:
+        system_prompt += f"""
+You are continuing a conversation. Here is the conversation history so far:
 
 <conversation_history>
 {history_text}
@@ -62,7 +72,7 @@ Continue the conversation naturally, taking into account what was discussed abov
 
     return ClaudeAgentOptions(
         model=model,
-        allowed_tools=["Read", "Write", "Edit", "Bash", "Glob", "Grep","WebSearch","WebFetch"],
+        allowed_tools=["Read", "Write", "Edit", "Bash", "Glob", "Grep", "WebSearch", "WebFetch"],
         permission_mode="acceptEdits",
         system_prompt=system_prompt,
     )
@@ -253,6 +263,13 @@ async def get_commands():
     return {"commands": list_commands()}
 
 
+@app.get("/pipeline/stats")
+async def get_pipeline_stats():
+    """Get pipeline stage statistics for the viewer."""
+    stats = await jobs_db.get_pipeline_stats()
+    return stats
+
+
 @app.post("/command/{session_id}")
 async def run_command(session_id: str, request: Request):
     """Execute a slash command with SSE progress streaming."""
@@ -336,6 +353,27 @@ HTML = """<!DOCTYPE html>
         /* System message style */
         .system { background: #1a2a3a; border-left: 3px solid #4a8aaa; font-family: monospace; font-size: 0.85rem; }
         .system pre { color: #aaccee; }
+        /* Pipeline viewer */
+        #pipeline { background: #0a0a1a; border-bottom: 1px solid #333; }
+        #pipeline-stages { overflow: hidden; max-height: 200px; transition: max-height 0.2s ease; }
+        #pipeline.collapsed #pipeline-stages { max-height: 0; padding: 0 1rem; }
+        #pipeline-header { display: flex; align-items: center; justify-content: space-between; padding: 0.4rem 1rem; cursor: pointer; }
+        #pipeline-header:hover { background: #12121f; }
+        #pipeline-title { font-size: 0.7rem; color: #666; text-transform: uppercase; letter-spacing: 0.05em; }
+        #pipeline-toggle { background: none; border: none; color: #555; cursor: pointer; font-size: 0.8rem; padding: 0.2rem; }
+        #pipeline-stages { display: flex; gap: 0.25rem; padding: 0 1rem 0.5rem 1rem; align-items: center; flex-wrap: wrap; }
+        .pipeline-arrow { color: #333; font-size: 0.7rem; }
+        .pipeline-stage { background: #1a1a2e; border-radius: 8px; padding: 0.6rem 0.9rem; min-width: 110px; border-left: 4px solid #555; }
+        .pipeline-stage.green { border-left-color: #4a8; }
+        .pipeline-stage.yellow { border-left-color: #a84; }
+        .pipeline-stage.orange { border-left-color: #a64; }
+        .pipeline-stage.red { border-left-color: #a44; }
+        .pipeline-stage.gray { border-left-color: #555; }
+        .stage-name { font-size: 0.75rem; color: #888; text-transform: uppercase; letter-spacing: 0.03em; }
+        .stage-count { font-size: 1.1rem; color: #ccc; font-weight: 500; }
+        .stage-unit { font-size: 0.7rem; color: #666; font-weight: normal; }
+        .stage-extra { font-size: 0.65rem; color: #666; margin-top: 0.15rem; }
+        .stage-time { font-size: 0.65rem; color: #555; margin-top: 0.15rem; }
     </style>
 </head>
 <body>
@@ -349,6 +387,13 @@ HTML = """<!DOCTYPE html>
         </div>
     </div>
     <div id="main">
+        <div id="pipeline">
+            <div id="pipeline-header" onclick="togglePipeline()">
+                <span id="pipeline-title">Pipeline</span>
+                <button id="pipeline-toggle">▼</button>
+            </div>
+            <div id="pipeline-stages"></div>
+        </div>
         <div id="chat"></div>
         <div id="input-area">
             <input id="prompt" type="text" placeholder="Ask Claude..." autofocus>
@@ -389,6 +434,91 @@ HTML = """<!DOCTYPE html>
             currentToolContainer = null;
         }
         let sessionStarted = false;  // Track if session has messages
+        let pipelineCollapsed = localStorage.getItem('pipelineCollapsed') === 'true';
+
+        function togglePipeline() {
+            pipelineCollapsed = !pipelineCollapsed;
+            localStorage.setItem('pipelineCollapsed', pipelineCollapsed);
+            updatePipelineVisibility();
+        }
+
+        function updatePipelineVisibility() {
+            const pipeline = document.getElementById('pipeline');
+            const toggle = document.getElementById('pipeline-toggle');
+            if (pipelineCollapsed) {
+                pipeline.classList.add('collapsed');
+                toggle.textContent = '▶';
+            } else {
+                pipeline.classList.remove('collapsed');
+                toggle.textContent = '▼';
+            }
+        }
+
+        function getFreshnessColor(isoTimestamp) {
+            if (!isoTimestamp) return 'gray';
+            const now = new Date();
+            const then = new Date(isoTimestamp);
+            const hoursAgo = (now - then) / (1000 * 60 * 60);
+            if (hoursAgo < 24) return 'green';
+            if (hoursAgo < 72) return 'yellow';
+            return 'orange';
+        }
+
+        function formatTimeAgo(isoTimestamp) {
+            if (!isoTimestamp) return 'never';
+            const now = new Date();
+            const then = new Date(isoTimestamp);
+            const hoursAgo = Math.floor((now - then) / (1000 * 60 * 60));
+            if (hoursAgo < 1) return 'just now';
+            if (hoursAgo < 24) return hoursAgo + 'h ago';
+            const daysAgo = Math.floor(hoursAgo / 24);
+            if (daysAgo === 1) return '1 day ago';
+            return daysAgo + ' days ago';
+        }
+
+        function formatBreakdown(breakdown) {
+            if (!breakdown || Object.keys(breakdown).length === 0) return '';
+            return Object.entries(breakdown)
+                .map(([k, v]) => k + ':' + v.toLocaleString())
+                .join(' ');
+        }
+
+        async function loadPipeline() {
+            try {
+                const res = await fetch('/pipeline/stats');
+                const data = await res.json();
+                const stages = ['discover', 'scrape', 'filter', 'targets', 'contacts', 'outreach'];
+                const labels = {discover: 'Discover', scrape: 'Scrape', filter: 'Filter', targets: 'Targets', contacts: 'Contacts', outreach: 'Outreach'};
+                const container = document.getElementById('pipeline-stages');
+
+                container.innerHTML = stages.map((stage, i) => {
+                    const info = data[stage] || {count: 0, last_run: null};
+                    const color = getFreshnessColor(info.last_run);
+                    const time = formatTimeAgo(info.last_run);
+                    const arrow = i < stages.length - 1 ? '<span class="pipeline-arrow">→</span>' : '';
+                    const unit = info.unit || '';
+
+                    // Build extra info line
+                    let extra = '';
+                    if (stage === 'scrape' && info.breakdown) {
+                        extra = '<div class="stage-extra">' + formatBreakdown(info.breakdown) + '</div>';
+                    } else if (stage === 'filter' && info.pass_rate !== undefined) {
+                        extra = '<div class="stage-extra">' + info.pass_rate + '% of ' + (info.evaluated || 0).toLocaleString() + '</div>';
+                    }
+
+                    return '<div class="pipeline-stage ' + color + '">' +
+                        '<div class="stage-name">' + labels[stage] + '</div>' +
+                        '<div class="stage-count">' + (info.count || 0).toLocaleString() + ' <span class="stage-unit">' + unit + '</span></div>' +
+                        extra +
+                        '<div class="stage-time">' + time + '</div>' +
+                        '</div>' + arrow;
+                }).join('');
+
+                updatePipelineVisibility();
+            } catch (e) {
+                console.log('Failed to load pipeline:', e);
+            }
+        }
 
         async function loadModels() {
             try {
@@ -678,8 +808,8 @@ HTML = """<!DOCTYPE html>
         promptInput.onkeydown = e => { if (e.key === 'Enter') sendMessage(); };
         document.getElementById('session-display').textContent = sessionId.slice(0, 8);
 
-        // Initialize: load models, commands, then history/sessions
-        Promise.all([loadModels(), loadCommands()]).then(() => {
+        // Initialize: load models, commands, pipeline, then history/sessions
+        Promise.all([loadModels(), loadCommands(), loadPipeline()]).then(() => {
             if (urlParams.get('session')) {
                 loadHistory().then(loadSessions);
             } else {

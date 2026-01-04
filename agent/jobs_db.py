@@ -374,7 +374,7 @@ async def get_stats() -> dict:
 async def get_pipeline_stats() -> dict:
     """Get pipeline stage statistics for the pipeline viewer.
 
-    Returns counts and last-run timestamps for each stage.
+    Returns counts, units, breakdowns, and last-run timestamps for each stage.
     Timestamps are ISO strings or None if never run.
     """
     async with jobs_session_factory() as db:
@@ -384,17 +384,30 @@ async def get_pipeline_stats() -> dict:
         result = await db.execute(select(func.max(Company.discovered_date)))
         discover_last = result.scalar()
 
-        # Scrape: jobs count + most recent last_scraped
+        # Scrape: jobs count + breakdown by platform + most recent last_scraped
         result = await db.execute(select(func.count(Job.id)))
         scrape_count = result.scalar()
         result = await db.execute(select(func.max(Company.last_scraped)))
         scrape_last = result.scalar()
 
-        # Filter: target_jobs count + most recent added_date
+        # Scrape breakdown by ATS platform
+        result = await db.execute(
+            select(Company.ats_platform, func.count(Job.id))
+            .join(Job, Company.id == Job.company_id)
+            .group_by(Company.ats_platform)
+        )
+        scrape_breakdown = {row[0] or 'unknown': row[1] for row in result.all()}
+
+        # Filter stats: evaluated, passed (target_jobs), pass rate
+        result = await db.execute(
+            select(func.count(Job.id)).where(Job.evaluated == True)
+        )
+        evaluated_count = result.scalar()
         result = await db.execute(select(func.count(TargetJob.id)))
         filter_count = result.scalar()
         result = await db.execute(select(func.max(TargetJob.added_date)))
         filter_last = result.scalar()
+        pass_rate = (filter_count / evaluated_count * 100) if evaluated_count > 0 else 0
 
         # Targets: pending count (status=1), same timestamp as filter
         result = await db.execute(
@@ -415,12 +428,12 @@ async def get_pipeline_stats() -> dict:
         outreach_last = result.scalar()
 
     return {
-        "discover": {"count": discover_count, "last_run": discover_last},
-        "scrape": {"count": scrape_count, "last_run": scrape_last},
-        "filter": {"count": filter_count, "last_run": filter_last},
-        "targets": {"count": targets_pending, "last_run": filter_last},  # Same as filter
-        "contacts": {"count": contacts_count, "last_run": contacts_last},
-        "outreach": {"count": outreach_count, "last_run": outreach_last},
+        "discover": {"count": discover_count, "unit": "companies", "last_run": discover_last},
+        "scrape": {"count": scrape_count, "unit": "jobs", "breakdown": scrape_breakdown, "last_run": scrape_last},
+        "filter": {"count": filter_count, "unit": "passed", "evaluated": evaluated_count, "pass_rate": round(pass_rate, 1), "last_run": filter_last},
+        "targets": {"count": targets_pending, "unit": "pending", "last_run": filter_last},
+        "contacts": {"count": contacts_count, "unit": "contacts", "last_run": contacts_last},
+        "outreach": {"count": outreach_count, "unit": "messages", "last_run": outreach_last},
     }
 
 
