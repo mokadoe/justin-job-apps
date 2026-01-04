@@ -391,6 +391,31 @@ PGPASSWORD=ktzEklKpHsEAzjlVsGzGcWPOgXXzjKIa psql -h turntable.proxy.rlwy.net -U 
 sqlite3 data/jobs.db "ALTER TABLE jobs ADD COLUMN posted_date TEXT;"
 ```
 
+### Multi-Developer Schema Skew
+
+When multiple developers work in parallel, schemas can drift:
+- Dev A adds columns to `src/` scripts but forgets the SQLAlchemy model
+- Dev B adds columns to the model but forgets Railway PostgreSQL
+- Local SQLite gets updated but Railway doesn't (or vice versa)
+
+**Audit command** (run periodically):
+
+```bash
+# Compare PostgreSQL vs SQLite columns for a table
+PGPASSWORD=ktzEklKpHsEAzjlVsGzGcWPOgXXzjKIa psql -h turntable.proxy.rlwy.net -U postgres -p 41317 -d railway \
+  -c "SELECT column_name FROM information_schema.columns WHERE table_name = 'contacts' ORDER BY ordinal_position;"
+
+sqlite3 data/jobs.db "PRAGMA table_info(contacts);"
+
+# Check what src/ code expects
+grep -rh "INSERT INTO contacts\|ALTER TABLE contacts" src/
+```
+
+**Three places must stay in sync:**
+1. `agent/jobs_db.py` - SQLAlchemy models
+2. Railway PostgreSQL - production database
+3. Local SQLite (`data/jobs.db`) - development database
+
 ## Troubleshooting
 
 ### Column doesn't exist (Railway)
@@ -415,4 +440,4 @@ SQLite has limited concurrency. Use `USE_REMOTE_DB=true` for concurrent access.
 
 ---
 
-Last updated: 2026-01-03
+Last updated: 2026-01-04
