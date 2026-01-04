@@ -322,6 +322,167 @@ async def get_pipeline_stats():
     return stats
 
 
+@app.get("/api/view/{stage}")
+async def get_view_data(stage: str):
+    """Get data for pipeline stage viewer."""
+    data = await jobs_db.get_view_data(stage)
+    if data is None:
+        return {"error": f"Unknown stage: {stage}"}
+    return data
+
+
+VIEWER_HTML = """<!DOCTYPE html>
+<html>
+<head>
+    <title>{title}</title>
+    <link href="https://cdn.jsdelivr.net/npm/gridjs/dist/theme/mermaid.min.css" rel="stylesheet"/>
+    <style>
+        * {{ box-sizing: border-box; margin: 0; padding: 0; }}
+        body {{ font-family: system-ui, sans-serif; background: #1a1a2e; color: #eee; padding: 1rem; }}
+        h1 {{ margin-bottom: 1rem; font-size: 1.5rem; color: #aaa; }}
+        .count {{ color: #666; font-weight: normal; font-size: 1rem; }}
+        #columns-panel {{ background: #12121f; padding: 0.75rem 1rem; border-radius: 8px; margin-bottom: 1rem; }}
+        .panel-header {{ font-size: 0.75rem; color: #666; text-transform: uppercase; margin-bottom: 0.5rem; cursor: pointer; }}
+        .panel-header:hover {{ color: #888; }}
+        #column-checkboxes {{ display: flex; flex-wrap: wrap; gap: 0.5rem 1rem; }}
+        #column-checkboxes.collapsed {{ display: none; }}
+        .col-check {{ display: flex; align-items: center; gap: 0.3rem; font-size: 0.85rem; color: #aaa; cursor: pointer; }}
+        .col-check:hover {{ color: #ccc; }}
+        .col-check input {{ cursor: pointer; }}
+        #table {{ margin-top: 1rem; }}
+        /* Grid.js dark theme overrides */
+        .gridjs-wrapper {{ border: 1px solid #333; border-radius: 8px; }}
+        .gridjs-table {{ background: #1a1a2e; }}
+        .gridjs-thead th {{ background: #12121f; color: #aaa; border-bottom: 1px solid #333; }}
+        .gridjs-tbody td {{ background: #1a1a2e; color: #ccc; border-bottom: 1px solid #222; }}
+        .gridjs-tr:hover td {{ background: #2a2a4a; }}
+        .gridjs-footer {{ background: #12121f; border-top: 1px solid #333; }}
+        .gridjs-pagination {{ color: #aaa; }}
+        .gridjs-pages button {{ background: #2a2a4a; color: #aaa; border: 1px solid #333; }}
+        .gridjs-pages button:hover {{ background: #3a3a5a; }}
+        .gridjs-pages button.gridjs-currentPage {{ background: #4a4a8a; color: #fff; }}
+        .gridjs-search {{ background: #12121f; }}
+        .gridjs-search-input {{ background: #1a1a2e; color: #eee; border: 1px solid #444; border-radius: 4px; padding: 0.5rem; }}
+        .gridjs-search-input:focus {{ outline: none; border-color: #6a6aaa; }}
+        .gridjs-notfound {{ background: #1a1a2e; color: #888; }}
+        a {{ color: #6a8aaa; }}
+    </style>
+</head>
+<body>
+    <h1>{title} <span class="count">({count} rows)</span></h1>
+    <div id="columns-panel">
+        <div class="panel-header" onclick="togglePanel()">Columns ▼</div>
+        <div id="column-checkboxes"></div>
+    </div>
+    <div id="table"></div>
+
+    <script src="https://cdn.jsdelivr.net/npm/gridjs/dist/gridjs.umd.js"></script>
+    <script>
+        const stage = '{stage}';
+        let allColumns = {all_columns};
+        let defaultColumns = {default_columns};
+        let rows = {rows};
+        let activeColumns = [...defaultColumns];
+        let grid = null;
+        let panelCollapsed = false;
+
+        function togglePanel() {{
+            panelCollapsed = !panelCollapsed;
+            document.getElementById('column-checkboxes').classList.toggle('collapsed', panelCollapsed);
+            document.querySelector('.panel-header').textContent = 'Columns ' + (panelCollapsed ? '▶' : '▼');
+        }}
+
+        function renderCheckboxes() {{
+            const container = document.getElementById('column-checkboxes');
+            container.innerHTML = allColumns.map(col => {{
+                const checked = activeColumns.includes(col) ? 'checked' : '';
+                return '<label class="col-check"><input type="checkbox" value="' + col + '" ' + checked + ' onchange="toggleColumn(this)"> ' + col + '</label>';
+            }}).join('');
+        }}
+
+        function toggleColumn(checkbox) {{
+            const col = checkbox.value;
+            if (checkbox.checked) {{
+                if (!activeColumns.includes(col)) {{
+                    // Insert in original order
+                    const idx = allColumns.indexOf(col);
+                    let insertAt = activeColumns.length;
+                    for (let i = 0; i < activeColumns.length; i++) {{
+                        if (allColumns.indexOf(activeColumns[i]) > idx) {{
+                            insertAt = i;
+                            break;
+                        }}
+                    }}
+                    activeColumns.splice(insertAt, 0, col);
+                }}
+            }} else {{
+                activeColumns = activeColumns.filter(c => c !== col);
+            }}
+            updateGrid();
+        }}
+
+        function formatCell(value, col) {{
+            if (value === null || value === undefined) return '';
+            // Make URLs clickable
+            if (col.includes('url') && typeof value === 'string' && value.startsWith('http')) {{
+                return gridjs.html('<a href="' + value + '" target="_blank">link</a>');
+            }}
+            // Format booleans
+            if (typeof value === 'boolean') return value ? 'Yes' : 'No';
+            // Format dates (truncate time)
+            if (col.includes('date') && typeof value === 'string' && value.includes('T')) {{
+                return value.split('T')[0];
+            }}
+            return value;
+        }}
+
+        function updateGrid() {{
+            const columns = activeColumns.map(col => ({{
+                name: col,
+                formatter: (cell) => formatCell(cell, col)
+            }}));
+            const data = rows.map(row => activeColumns.map(col => row[col]));
+
+            if (grid) {{
+                grid.updateConfig({{ columns, data }}).forceRender();
+            }} else {{
+                grid = new gridjs.Grid({{
+                    columns,
+                    data,
+                    search: true,
+                    sort: true,
+                    pagination: {{ limit: 50 }},
+                    fixedHeader: true,
+                    height: 'calc(100vh - 180px)'
+                }}).render(document.getElementById('table'));
+            }}
+        }}
+
+        renderCheckboxes();
+        updateGrid();
+    </script>
+</body>
+</html>"""
+
+
+@app.get("/view/{stage}", response_class=HTMLResponse)
+async def view_stage(stage: str):
+    """Serve the pipeline stage viewer page."""
+    data = await jobs_db.get_view_data(stage)
+    if data is None:
+        return HTMLResponse(f"<h1>Unknown stage: {stage}</h1>", status_code=404)
+
+    html = VIEWER_HTML.format(
+        title=data["title"],
+        stage=stage,
+        count=len(data["rows"]),
+        all_columns=json.dumps(data["all_columns"]),
+        default_columns=json.dumps(data["default_columns"]),
+        rows=json.dumps(data["rows"])
+    )
+    return HTMLResponse(html)
+
+
 @app.post("/command/{session_id}")
 async def run_command(session_id: str, request: Request):
     """Execute a slash command with SSE progress streaming."""
@@ -417,7 +578,8 @@ HTML = """<!DOCTYPE html>
         #pipeline-toggle { background: none; border: none; color: #555; cursor: pointer; font-size: 0.8rem; padding: 0.2rem; }
         #pipeline-stages { display: flex; gap: 0.25rem; padding: 0 1rem 0.5rem 1rem; align-items: center; flex-wrap: wrap; }
         .pipeline-arrow { color: #333; font-size: 0.7rem; }
-        .pipeline-stage { background: #1a1a2e; border-radius: 8px; padding: 0.6rem 0.9rem; min-width: 110px; border-left: 4px solid #555; }
+        .pipeline-stage { background: #1a1a2e; border-radius: 8px; padding: 0.6rem 0.9rem; min-width: 110px; border-left: 4px solid #555; cursor: pointer; transition: background 0.15s; }
+        .pipeline-stage:hover { background: #2a2a4a; }
         .pipeline-stage.green { border-left-color: #4a8; }
         .pipeline-stage.yellow { border-left-color: #a84; }
         .pipeline-stage.orange { border-left-color: #a64; }
@@ -589,7 +751,7 @@ HTML = """<!DOCTYPE html>
                         extra = '<div class="stage-extra">' + info.pass_rate + '% of ' + (info.evaluated || 0).toLocaleString() + '</div>';
                     }
 
-                    return '<div class="pipeline-stage ' + color + '">' +
+                    return '<div class="pipeline-stage ' + color + '" onclick="window.open(\\'/view/' + stage + '\\', \\'_blank\\')">' +
                         '<div class="stage-name">' + labels[stage] + '</div>' +
                         '<div class="stage-count">' + (info.count || 0).toLocaleString() + ' <span class="stage-unit">' + unit + '</span></div>' +
                         extra +

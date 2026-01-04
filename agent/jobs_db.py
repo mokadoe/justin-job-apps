@@ -676,3 +676,155 @@ async def finalize_review_job(job_id: int, accept: bool, new_score: float = None
 
         await db.commit()
         return True
+
+
+# View data for pipeline viewer
+
+STAGE_CONFIGS = {
+    "discover": {
+        "title": "Companies (Discover)",
+        "default_columns": ["name", "ats_platform", "ats_url", "discovered_date"],
+        "all_columns": ["id", "name", "discovery_source", "ats_platform", "ats_slug", "ats_url", "website", "last_scraped", "is_active", "discovered_date"],
+    },
+    "scrape": {
+        "title": "Jobs (Scrape)",
+        "default_columns": ["company", "job_title", "location", "last_scraped"],
+        "all_columns": ["id", "company", "job_title", "location", "job_url", "posted_date", "evaluated", "discovered_date", "last_scraped"],
+    },
+    "filter": {
+        "title": "Evaluated Jobs (Filter)",
+        "default_columns": ["company", "job_title", "location", "status", "match_reason"],
+        "all_columns": ["id", "company", "job_title", "location", "status", "relevance_score", "match_reason", "priority", "is_intern", "added_date"],
+    },
+    "targets": {
+        "title": "Target Jobs (Pending)",
+        "default_columns": ["company", "job_title", "location", "priority", "relevance_score"],
+        "all_columns": ["id", "job_id", "company", "job_title", "location", "job_url", "priority", "relevance_score", "match_reason", "is_intern", "added_date"],
+    },
+    "contacts": {
+        "title": "Contacts",
+        "default_columns": ["name", "title", "company", "is_priority", "match_confidence"],
+        "all_columns": ["id", "name", "title", "company", "linkedin_url", "is_priority", "match_confidence", "context_source", "discovered_date"],
+    },
+    "outreach": {
+        "title": "Outreach Messages",
+        "default_columns": ["company", "message_preview", "generated_date", "sent_date"],
+        "all_columns": ["id", "company", "message_preview", "company_research_preview", "generated_date", "sent_date"],
+    },
+}
+
+
+async def get_view_data(stage: str) -> dict | None:
+    """Get data for pipeline viewer.
+
+    Returns dict with title, all_columns, default_columns, rows.
+    Returns None if stage is invalid.
+    """
+    if stage not in STAGE_CONFIGS:
+        return None
+
+    config = STAGE_CONFIGS[stage]
+    rows = []
+
+    async with jobs_session_factory() as db:
+        if stage == "discover":
+            result = await db.execute(
+                select(Company).order_by(Company.discovered_date.desc())
+            )
+            for c in result.scalars().all():
+                rows.append({
+                    "id": c.id, "name": c.name, "discovery_source": c.discovery_source,
+                    "ats_platform": c.ats_platform, "ats_slug": c.ats_slug, "ats_url": c.ats_url,
+                    "website": c.website, "last_scraped": c.last_scraped,
+                    "is_active": c.is_active, "discovered_date": c.discovered_date
+                })
+
+        elif stage == "scrape":
+            result = await db.execute(
+                select(Job, Company.name.label("company_name"), Company.last_scraped.label("company_last_scraped"))
+                .join(Company, Job.company_id == Company.id)
+                .order_by(Job.discovered_date.desc())
+            )
+            for j, company_name, last_scraped in result.all():
+                rows.append({
+                    "id": j.id, "company": company_name, "job_title": j.job_title,
+                    "location": j.location, "job_url": j.job_url, "posted_date": j.posted_date,
+                    "evaluated": j.evaluated, "discovered_date": j.discovered_date,
+                    "last_scraped": last_scraped
+                })
+
+        elif stage == "filter":
+            # All evaluated jobs with their target status (if any)
+            result = await db.execute(
+                select(Job, Company.name.label("company_name"), TargetJob)
+                .join(Company, Job.company_id == Company.id)
+                .outerjoin(TargetJob, Job.id == TargetJob.job_id)
+                .where(Job.evaluated == True)
+                .order_by(TargetJob.added_date.desc().nullsfirst())
+            )
+            for j, company_name, t in result.all():
+                status = "rejected"
+                if t:
+                    status = {0: "pending_review", 1: "pending", 2: "reviewed", 3: "applied"}.get(t.status, "unknown")
+                rows.append({
+                    "id": j.id, "company": company_name, "job_title": j.job_title,
+                    "location": j.location, "status": status,
+                    "relevance_score": t.relevance_score if t else None,
+                    "match_reason": t.match_reason if t else None,
+                    "priority": t.priority if t else None,
+                    "is_intern": t.is_intern if t else None,
+                    "added_date": t.added_date if t else None
+                })
+
+        elif stage == "targets":
+            result = await db.execute(
+                select(TargetJob, Job, Company.name.label("company_name"))
+                .join(Job, TargetJob.job_id == Job.id)
+                .join(Company, Job.company_id == Company.id)
+                .where(TargetJob.status == 1)
+                .order_by(TargetJob.priority, TargetJob.relevance_score.desc())
+            )
+            for t, j, company_name in result.all():
+                rows.append({
+                    "id": t.id, "job_id": j.id, "company": company_name,
+                    "job_title": j.job_title, "location": j.location, "job_url": j.job_url,
+                    "priority": t.priority, "relevance_score": t.relevance_score,
+                    "match_reason": t.match_reason, "is_intern": t.is_intern,
+                    "added_date": t.added_date
+                })
+
+        elif stage == "contacts":
+            result = await db.execute(
+                select(Contact, Company.name.label("company_name"))
+                .join(Company, Contact.company_id == Company.id)
+                .order_by(Contact.is_priority.desc(), Contact.discovered_date.desc())
+            )
+            for c, company_name in result.all():
+                rows.append({
+                    "id": c.id, "name": c.name, "title": c.title, "company": company_name,
+                    "linkedin_url": c.linkedin_url, "is_priority": c.is_priority,
+                    "match_confidence": c.match_confidence, "context_source": c.context_source,
+                    "discovered_date": c.discovered_date
+                })
+
+        elif stage == "outreach":
+            result = await db.execute(
+                select(OutreachMessage, Company.name.label("company_name"))
+                .join(Company, OutreachMessage.company_id == Company.id)
+                .order_by(OutreachMessage.generated_date.desc())
+            )
+            for m, company_name in result.all():
+                rows.append({
+                    "id": m.id, "company": company_name,
+                    "message_preview": (m.message_text[:100] + "...") if m.message_text and len(m.message_text) > 100 else m.message_text,
+                    "company_research_preview": (m.company_research[:100] + "...") if m.company_research and len(m.company_research) > 100 else m.company_research,
+                    "generated_date": m.generated_date, "sent_date": m.sent_date
+                })
+
+    return {
+        "stage": stage,
+        "title": config["title"],
+        "all_columns": config["all_columns"],
+        "default_columns": config["default_columns"],
+        "rows": rows
+    }
