@@ -9,7 +9,6 @@ This script:
 5. Stores messages in database for review before sending
 """
 
-import sqlite3
 import json
 import os
 import sys
@@ -23,8 +22,14 @@ load_dotenv()
 # Add parent directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from utils.cost_tracker import track_api_call
+from utils.db import get_connection, is_remote
 
-DB_PATH = Path(__file__).parent.parent.parent / "data" / "jobs.db"
+
+def _placeholder():
+    """Return SQL placeholder for current database."""
+    return "%s" if is_remote() else "?"
+
+
 PROFILE_PATH = Path(__file__).parent.parent.parent / "profile.json"
 
 # Initialize Claude API
@@ -42,28 +47,30 @@ def load_profile():
 
 def get_companies_with_contacts():
     """Get companies that have priority contacts."""
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    cursor = conn.cursor()
+    with get_connection() as conn:
+        cursor = conn.cursor()
 
-    cursor.execute("""
-        SELECT DISTINCT
-            c.id,
-            c.name,
-            c.website,
-            COUNT(DISTINCT co.id) as contact_count,
-            COUNT(DISTINCT CASE WHEN co.is_priority = 1 THEN co.id END) as priority_count
-        FROM companies c
-        JOIN contacts co ON c.id = co.company_id
-        WHERE co.is_priority = 1
-        GROUP BY c.id
-        ORDER BY priority_count DESC, contact_count DESC
-    """)
+        cursor.execute("""
+            SELECT
+                c.id,
+                c.name,
+                c.website,
+                COUNT(DISTINCT co.id) as contact_count,
+                COUNT(DISTINCT CASE WHEN co.is_priority = 1 THEN co.id END) as priority_count
+            FROM companies c
+            JOIN contacts co ON c.id = co.company_id
+            WHERE co.is_priority = 1
+            GROUP BY c.id, c.name, c.website
+            ORDER BY priority_count DESC, contact_count DESC
+        """)
 
-    companies = [dict(row) for row in cursor.fetchall()]
-    conn.close()
+        rows = cursor.fetchall()
+        if is_remote():
+            companies = [dict(row) for row in rows]
+        else:
+            companies = [dict(row) for row in rows]
 
-    return companies
+        return companies
 
 
 def get_company_context(company_id):
@@ -72,22 +79,25 @@ def get_company_context(company_id):
 
     Returns a summary of what the company does based on their job titles and descriptions.
     """
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    cursor = conn.cursor()
+    p = _placeholder()
+    with get_connection() as conn:
+        cursor = conn.cursor()
 
-    # Get job titles for this company (especially the pending ones)
-    cursor.execute("""
-        SELECT j.job_title, j.job_description, t.match_reason
-        FROM jobs j
-        LEFT JOIN target_jobs t ON j.id = t.job_id
-        WHERE j.company_id = ?
-        AND (t.status = 1 OR t.status IS NULL)
-        LIMIT 5
-    """, (company_id,))
+        # Get job titles for this company (especially the pending ones)
+        cursor.execute(f"""
+            SELECT j.job_title, j.job_description, t.match_reason
+            FROM jobs j
+            LEFT JOIN target_jobs t ON j.id = t.job_id
+            WHERE j.company_id = {p}
+            AND (t.status = 1 OR t.status IS NULL)
+            LIMIT 5
+        """, (company_id,))
 
-    jobs = [dict(row) for row in cursor.fetchall()]
-    conn.close()
+        rows = cursor.fetchall()
+        if is_remote():
+            jobs = [dict(row) for row in rows]
+        else:
+            jobs = [dict(row) for row in rows]
 
     if not jobs:
         return "No job information available."
@@ -163,28 +173,37 @@ def store_message(company_id, message_text, company_research):
 
     Uses INSERT OR REPLACE to update if message already exists.
     """
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
+    p = _placeholder()
+    with get_connection() as conn:
+        cursor = conn.cursor()
 
-    cursor.execute("""
-        INSERT OR REPLACE INTO messages (company_id, message_text, company_research)
-        VALUES (?, ?, ?)
-    """, (company_id, message_text, company_research))
+        if is_remote():
+            cursor.execute(f"""
+                INSERT INTO messages (company_id, message_text, company_research)
+                VALUES ({p}, {p}, {p})
+                ON CONFLICT (company_id) DO UPDATE SET
+                    message_text = EXCLUDED.message_text,
+                    company_research = EXCLUDED.company_research
+            """, (company_id, message_text, company_research))
+        else:
+            cursor.execute(f"""
+                INSERT OR REPLACE INTO messages (company_id, message_text, company_research)
+                VALUES ({p}, {p}, {p})
+            """, (company_id, message_text, company_research))
 
-    conn.commit()
-    conn.close()
+        conn.commit()
 
 
 def get_existing_messages():
     """Get count of existing messages."""
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
+    with get_connection() as conn:
+        cursor = conn.cursor()
 
-    cursor.execute("SELECT COUNT(*) FROM messages")
-    count = cursor.fetchone()[0]
+        cursor.execute("SELECT COUNT(*) as cnt FROM messages")
+        row = cursor.fetchone()
+        count = row['cnt'] if is_remote() else row[0]
 
-    conn.close()
-    return count
+        return count
 
 
 def main():

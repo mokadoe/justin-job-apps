@@ -4,11 +4,17 @@
 import sqlite3
 from pathlib import Path
 
+from db import is_remote
+
 DB_PATH = Path(__file__).parent.parent.parent / "data" / "jobs.db"
 
 
 def migrate():
     """Add contacts table and website column."""
+    if is_remote():
+        print("Remote database - schema managed by agent/jobs_db.py")
+        return
+
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
 

@@ -6,7 +6,7 @@
 
 **📊 Status:** Enhanced Filtering Complete (Day 7) - Two-stage AI filter with 19x improved match rate
 
-**💻 Tech Stack:** Python 3.13, SQLite, Claude API (Anthropic), Google Custom Search API
+**💻 Tech Stack:** Python 3.13, SQLite/PostgreSQL (dual-database support), Claude API (Anthropic), Google Custom Search API
 
 ---
 
@@ -30,7 +30,8 @@
 - Database: SQLite with 5 tables, optimized architecture
 
 **What You Need to Know:**
-- Database is in `data/jobs.db` (gitignored, local only)
+- Database: local SQLite (`data/jobs.db`) or remote PostgreSQL (Railway)
+- Set `USE_REMOTE_DB=true` to connect to remote database
 - API keys in `.env` file (also gitignored)
 - Virtual environment: `env/` (NOT `venv/`)
 - Run `python3 src/outreach/prepare_outreach.py` to see a complete outreach example
@@ -151,6 +152,7 @@ justin-job-apps/
 │   │   └── profile.json          # User profile for personalization
 │   │
 │   └── utils/            # Utilities & tools
+│       ├── db.py                 # Database abstraction (SQLite/PostgreSQL)
 │       ├── constants.py          # Status codes & labels
 │       ├── init_db.py            # Database initialization
 │       └── view.py               # Database inspection CLI
@@ -164,6 +166,7 @@ justin-job-apps/
 │   └── jobs.sql          # Table definitions
 │
 ├── docs/                 # Documentation
+│   ├── database_abstraction.md  # SQLite/PostgreSQL abstraction guide
 │   ├── mvp_design.md     # Original MVP design & timeline
 │   └── learnings.md      # Decision-making principles
 │
@@ -336,6 +339,62 @@ SELECT
   SUM(CASE WHEN status = 1 THEN 1 ELSE 0 END) as pending
 FROM target_jobs;
 ```
+
+---
+
+## Database Abstraction
+
+The codebase supports both **local SQLite** and **remote PostgreSQL** (Railway) databases through a unified abstraction layer.
+
+### Quick Usage
+
+```bash
+# Use local SQLite (default)
+python3 src/utils/view.py targets
+
+# Use remote PostgreSQL
+USE_REMOTE_DB=true python3 src/utils/view.py targets
+```
+
+### How It Works
+
+All database connections go through `src/utils/db.py`:
+
+```python
+from db import get_connection, is_remote
+
+def _placeholder():
+    return "%s" if is_remote() else "?"
+
+p = _placeholder()
+with get_connection() as conn:
+    cursor = conn.cursor()
+    cursor.execute(f"SELECT * FROM jobs WHERE id = {p}", (job_id,))
+```
+
+### Key Differences
+
+| Feature | SQLite | PostgreSQL |
+|---------|--------|------------|
+| Placeholder | `?` | `%s` |
+| Upsert | `INSERT OR IGNORE` | `ON CONFLICT DO NOTHING` |
+| Last Insert ID | `cursor.lastrowid` | `RETURNING id` |
+| Row Access | `row[0]` or `row['col']` | `row['col']` only |
+
+### Environment Variables
+
+| Variable | Description |
+|----------|-------------|
+| `USE_REMOTE_DB` | Set to `true` to use PostgreSQL |
+| `DATABASE_URL` | PostgreSQL connection string (from Railway) |
+
+### Documentation
+
+See `docs/database_abstraction.md` for:
+- Complete implementation guide
+- How to add database support to new files
+- Common pitfalls and solutions
+- List of all updated files
 
 ---
 
@@ -639,12 +698,17 @@ The enhanced filtering pipeline has identified 299 target opportunities:
 
 ## Environment Setup
 
-### Required API Keys (in `.env`)
+### Required Environment Variables (in `.env`)
 
 ```bash
+# API Keys
 ANTHROPIC_API_KEY=sk-ant-...    # For job filtering & message generation
 GOOGLE_API_KEY=...              # For contact discovery
 GOOGLE_CSE_ID=...               # Custom Search Engine ID
+
+# Database (optional - for remote PostgreSQL)
+USE_REMOTE_DB=true              # Set to use PostgreSQL instead of SQLite
+DATABASE_URL=postgresql://...   # PostgreSQL connection string (from Railway)
 ```
 
 ### Python Environment
@@ -658,6 +722,7 @@ GOOGLE_CSE_ID=...               # Custom Search Engine ID
   - requests (HTTP requests)
   - python-dotenv (environment variables)
   - tabulate (CLI output formatting)
+  - psycopg2-binary (PostgreSQL support)
 
 ### Installation
 
@@ -771,7 +836,7 @@ Personal project for job search automation. Not for redistribution or commercial
 
 ---
 
-**Last Updated:** 2026-01-03 (Enhanced filtering complete, 12 commits pushed)
+**Last Updated:** 2026-01-04 (Database abstraction added - SQLite/PostgreSQL support)
 **Project Start:** 2025-12-26
 **Days Elapsed:** 7/7 (Enhanced filtering complete, ready for outreach)
 **Repository:** https://github.com/mokadoe/justin-job-apps

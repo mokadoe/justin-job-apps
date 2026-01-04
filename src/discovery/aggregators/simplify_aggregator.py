@@ -12,7 +12,6 @@ Extracts:
 """
 
 import sys
-import sqlite3
 import re
 import requests
 from pathlib import Path
@@ -22,7 +21,16 @@ from bs4 import BeautifulSoup
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 from scrapers.ats_utils import extract_slug_from_ats_url
 
-DB_PATH = Path(__file__).parent.parent.parent.parent / "data" / "jobs.db"
+# Add utils to path for db import
+sys.path.insert(0, str(Path(__file__).parent.parent.parent / "utils"))
+from db import get_connection, is_remote
+
+
+def _placeholder():
+    """Return SQL placeholder for current database."""
+    return "%s" if is_remote() else "?"
+
+
 SIMPLIFY_README_URL = "https://raw.githubusercontent.com/SimplifyJobs/New-Grad-Positions/dev/README.md"
 
 # ATS platform detection patterns
@@ -148,9 +156,7 @@ def add_companies_to_db(companies_data: list):
     Args:
         companies_data: List of (company_name, job_url) tuples
     """
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-
+    p = _placeholder()
     stats = {
         'total': len(companies_data),
         'added': 0,
@@ -159,35 +165,37 @@ def add_companies_to_db(companies_data: list):
         'unsupported': 0,
     }
 
-    for company_name, job_url in companies_data:
-        # Detect ATS platform
-        ats_platform, ats_url = detect_ats_from_url(job_url)
-        is_active = 1 if ats_platform in SUPPORTED_ATS else 0
-        ats_slug = extract_slug_from_ats_url(ats_platform, ats_url)
+    with get_connection() as conn:
+        cursor = conn.cursor()
 
-        if is_active:
-            stats['supported'] += 1
-        else:
-            stats['unsupported'] += 1
+        for company_name, job_url in companies_data:
+            # Detect ATS platform
+            ats_platform, ats_url = detect_ats_from_url(job_url)
+            is_active = 1 if ats_platform in SUPPORTED_ATS else 0
+            ats_slug = extract_slug_from_ats_url(ats_platform, ats_url)
 
-        # Check if company exists
-        cursor.execute("SELECT id FROM companies WHERE name = ?", (company_name,))
-        existing = cursor.fetchone()
+            if is_active:
+                stats['supported'] += 1
+            else:
+                stats['unsupported'] += 1
 
-        if existing:
-            stats['skipped_exists'] += 1
-        else:
-            # Insert new company with discovery_source
-            cursor.execute("""
-                INSERT INTO companies (name, discovery_source, ats_platform, ats_slug, ats_url, is_active)
-                VALUES (?, 'simplify', ?, ?, ?, ?)
-            """, (company_name, ats_platform, ats_slug, ats_url, is_active))
-            stats['added'] += 1
-            active_label = "✓" if is_active else "✗"
-            print(f"  {active_label} {company_name} ({ats_platform})")
+            # Check if company exists
+            cursor.execute(f"SELECT id FROM companies WHERE name = {p}", (company_name,))
+            existing = cursor.fetchone()
 
-    conn.commit()
-    conn.close()
+            if existing:
+                stats['skipped_exists'] += 1
+            else:
+                # Insert new company with discovery_source
+                cursor.execute(f"""
+                    INSERT INTO companies (name, discovery_source, ats_platform, ats_slug, ats_url, is_active)
+                    VALUES ({p}, 'simplify', {p}, {p}, {p}, {p})
+                """, (company_name, ats_platform, ats_slug, ats_url, is_active))
+                stats['added'] += 1
+                active_label = "✓" if is_active else "✗"
+                print(f"  {active_label} {company_name} ({ats_platform})")
+
+        conn.commit()
 
     return stats
 

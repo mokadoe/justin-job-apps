@@ -11,7 +11,7 @@
 ### Projects
 
 1. **`justin-job-apps/`** - Job Application Automation Pipeline
-   - **Type:** Python/SQLite application
+   - **Type:** Python application with SQLite/PostgreSQL dual-database support
    - **Purpose:** Automated job discovery, filtering, and contact discovery for new grad SWE positions
    - **Status:** MVP Complete - Ready for testing (Day 6/7)
    - **GitHub:** https://github.com/mokadoe/justin-job-apps
@@ -59,10 +59,15 @@
 **Required Reading:**
 1. `justin-job-apps/README.md` - Complete project overview
 2. `justin-job-apps/docs/learnings.md` - Decision-making principles
-3. `justin-job-apps/docs/mvp_design.md` - Original design document
+3. `justin-job-apps/docs/database_abstraction.md` - SQLite/PostgreSQL abstraction guide
+4. `justin-job-apps/docs/mvp_design.md` - Original design document
 
 **Key Points:**
-- Uses Python 3.13+, SQLite, Claude API
+- Uses Python 3.13+, SQLite/PostgreSQL, Claude API
+- **Database abstraction:** All `src/` files use `src/utils/db.py` for connections
+  - Local: SQLite (`data/jobs.db`) - default
+  - Remote: PostgreSQL (Railway) - set `USE_REMOTE_DB=true`
+  - See `docs/database_abstraction.md` for implementation details
 - Dependencies in `requirements.txt` - install with `pip install -r requirements.txt`
 - Organized by function: `src/scrapers/`, `src/filters/`, `src/discovery/`, `src/utils/`
 - Environment managed by `direnv` with `env/` directory (NOT `venv/`)
@@ -73,8 +78,9 @@
 - Read relevant source files in `src/`
 - Understand the database schema in `schemas/jobs.sql`
 - Check constants in `src/utils/constants.py`
+- **For database work:** Use `src/utils/db.py` - never hardcode `sqlite3.connect()`
 - Ensure dependencies installed: `pip install -r requirements.txt`
-- Test changes with `make <command>`
+- Test changes with `make <command>` (test both local and remote if touching DB)
 
 #### For `mokadoe.github.io/`
 
@@ -204,12 +210,14 @@ From `justin-job-apps/docs/learnings.md` - applies to all projects:
   - `requests` - HTTP requests for ATS APIs
   - `python-dotenv` - Environment variable management
   - `tabulate` - CLI table formatting
+  - `psycopg2-binary` - PostgreSQL support for remote database
 
 **Environment Variables:**
 - Stored in `.env` file (gitignored)
 - Loaded via `python-dotenv` in Python projects
 - Never commit API keys or secrets
 - Required keys: `ANTHROPIC_API_KEY`, `GOOGLE_API_KEY`, `GOOGLE_CSE_ID`
+- Optional keys: `USE_REMOTE_DB`, `DATABASE_URL` (for PostgreSQL)
 
 ---
 
@@ -289,8 +297,8 @@ make test  # or project-specific command
 - ✅ All code committed and pushed to GitHub
 
 **Current State:**
-- Database: `data/jobs.db` (local, gitignored) with 5 tables
-- All make commands working
+- Database: SQLite (`data/jobs.db`) or PostgreSQL (Railway) - abstracted via `src/utils/db.py`
+- All make commands working (test with `USE_REMOTE_DB=true` for remote)
 - 299 target jobs ready for outreach (prioritized by location)
 - Optimized architecture: rejected jobs not stored in target_jobs
 
@@ -314,9 +322,11 @@ python3 src/outreach/prepare_outreach.py
 
 **Important Files:**
 - `README.md` - Complete project overview (read this first!)
+- `docs/database_abstraction.md` - Database abstraction guide (read for any DB work)
+- `src/utils/db.py` - Database connection abstraction (SQLite/PostgreSQL)
 - `profile.json` - User profile for message personalization
 - `data/jobs.db` - SQLite database (local only, not in git)
-- `.env` - API keys (ANTHROPIC_API_KEY, GOOGLE_API_KEY, GOOGLE_CSE_ID)
+- `.env` - API keys and database config (ANTHROPIC_API_KEY, DATABASE_URL, etc.)
 
 ### mokadoe.github.io (Current as of 2025-12-21)
 
@@ -363,6 +373,8 @@ npm run deploy  # Deploy to GitHub Pages
 4. **Over-engineering** - Keep it simple, iterate
 5. **Forgetting to update docs** - Document as you go
 6. **Not testing before marking complete** - Always verify
+7. **Hardcoding `sqlite3.connect()`** - Use `src/utils/db.py` for all database connections
+8. **Using `row[0]` for PostgreSQL** - Use `row['column_name']` for compatibility
 
 ---
 
@@ -406,10 +418,10 @@ Before starting any work:
 
 ---
 
-**Last Updated:** 2026-01-01
+**Last Updated:** 2026-01-04
 
 **Workspace Owner:** Justin Chu
 
 **Projects:** 2 active (justin-job-apps, mokadoe.github.io)
 
-**justin-job-apps Status:** MVP Complete - All commits pushed to GitHub - Ready for outreach testing
+**justin-job-apps Status:** MVP Complete - Database abstraction added (SQLite/PostgreSQL) - Ready for outreach testing

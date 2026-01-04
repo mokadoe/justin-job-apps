@@ -13,11 +13,17 @@ Safe to run multiple times - checks if columns already exist.
 import sqlite3
 from pathlib import Path
 
+from db import is_remote
+
 DB_PATH = Path(__file__).parent.parent.parent / "data" / "jobs.db"
 
 
 def migrate():
     """Run the migration."""
+    if is_remote():
+        print("Remote database - schema managed by agent/jobs_db.py")
+        return
+
     if not DB_PATH.exists():
         print(f"No database found at {DB_PATH}, skipping migration")
         return

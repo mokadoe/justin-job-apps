@@ -14,7 +14,6 @@ Two-stage filtering approach:
 5. Prioritize US jobs (priority=1) over non-US (priority=3)
 """
 
-import sqlite3
 import json
 import os
 import re
@@ -24,6 +23,7 @@ from dotenv import load_dotenv
 import sys
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from utils.constants import STATUS_NOT_RELEVANT, STATUS_PENDING
+from utils.db import get_connection, is_remote
 
 # Cost tracking (optional)
 try:
@@ -36,8 +36,14 @@ except ImportError:
 # Load environment variables from .env file
 load_dotenv()
 
-DB_PATH = Path(__file__).parent.parent.parent / "data" / "jobs.db"
 PROFILE_PATH = Path(__file__).parent.parent.parent / "profile.json"
+
+
+def _placeholder():
+    """Return SQL placeholder for current database."""
+    return "%s" if is_remote() else "?"
+
+
 BATCH_SIZE = 50  # Smaller batches for description analysis
 SONNET_BATCH_SIZE = 20  # Smaller batches for expensive Sonnet calls
 
@@ -81,22 +87,20 @@ def is_intern_only(job_title):
 
 def get_unprocessed_jobs():
     """Get jobs that haven't been evaluated yet, including descriptions."""
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    cursor = conn.cursor()
+    with get_connection() as conn:
+        cursor = conn.cursor()
 
-    cursor.execute("""
-        SELECT j.id, j.job_title, j.job_description, j.location, c.name as company_name
-        FROM jobs j
-        JOIN companies c ON j.company_id = c.id
-        WHERE j.evaluated = 0
-        ORDER BY j.id
-    """)
+        cursor.execute("""
+            SELECT j.id, j.job_title, j.job_description, j.location, c.name as company_name
+            FROM jobs j
+            JOIN companies c ON j.company_id = c.id
+            WHERE j.evaluated = 0
+            ORDER BY j.id
+        """)
 
-    jobs = [dict(row) for row in cursor.fetchall()]
-    conn.close()
+        jobs = [dict(row) for row in cursor.fetchall()]
 
-    return jobs
+        return jobs
 
 
 def is_non_us_location(location):
@@ -399,70 +403,87 @@ def insert_target_jobs(all_jobs):
     if not all_jobs:
         return {'inserted': 0, 'accepted': 0, 'rejected': 0}
 
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
+    p = _placeholder()
 
-    stats = {'inserted': 0, 'accepted': 0, 'rejected': 0}
-    job_ids_to_mark = []
+    with get_connection() as conn:
+        cursor = conn.cursor()
 
-    for job in all_jobs:
-        try:
-            decision = job.get("decision", "REJECT")
+        stats = {'inserted': 0, 'accepted': 0, 'rejected': 0}
+        job_ids_to_mark = []
 
-            # Track stats
-            if decision == "ACCEPT":
-                stats['accepted'] += 1
-            elif decision == "REJECT":
-                stats['rejected'] += 1
-                # Mark as evaluated but DON'T insert into target_jobs
-                job_ids_to_mark.append(job["job_id"])
-                continue
-            else:
-                # REVIEW - skip for now
-                continue
+        for job in all_jobs:
+            try:
+                decision = job.get("decision", "REJECT")
 
-            # Only insert ACCEPT jobs into target_jobs
-            # Determine priority: non-US jobs are low priority
-            priority = 3 if job.get("is_non_us", False) else 1
+                # Track stats
+                if decision == "ACCEPT":
+                    stats['accepted'] += 1
+                elif decision == "REJECT":
+                    stats['rejected'] += 1
+                    # Mark as evaluated but DON'T insert into target_jobs
+                    job_ids_to_mark.append(job["job_id"])
+                    continue
+                else:
+                    # REVIEW - skip for now
+                    continue
 
-            # Build experience analysis JSON
-            experience_info = {
-                "min_years": job.get("min_years"),
-                "max_years": job.get("max_years"),
-                "is_engineering": job.get("is_engineering"),
-                "decision": decision
-            }
+                # Only insert ACCEPT jobs into target_jobs
+                # Determine priority: non-US jobs are low priority
+                priority = 3 if job.get("is_non_us", False) else 1
 
-            cursor.execute("""
-                INSERT OR IGNORE INTO target_jobs
-                (job_id, relevance_score, match_reason, status, priority, is_intern, experience_analysis)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-            """, (
-                job["job_id"],
-                job["score"],
-                job["reasoning"],
-                STATUS_PENDING,  # ACCEPT jobs are always pending
-                priority,
-                job.get("is_intern", False),
-                json.dumps(experience_info)
-            ))
+                # Build experience analysis JSON
+                experience_info = {
+                    "min_years": job.get("min_years"),
+                    "max_years": job.get("max_years"),
+                    "is_engineering": job.get("is_engineering"),
+                    "decision": decision
+                }
 
-            if cursor.rowcount > 0:
-                stats['inserted'] += 1
-                job_ids_to_mark.append(job["job_id"])
+                if is_remote():
+                    cursor.execute(f"""
+                        INSERT INTO target_jobs
+                        (job_id, relevance_score, match_reason, status, priority, is_intern, experience_analysis)
+                        VALUES ({p}, {p}, {p}, {p}, {p}, {p}, {p})
+                        ON CONFLICT (job_id) DO NOTHING
+                    """, (
+                        job["job_id"],
+                        job["score"],
+                        job["reasoning"],
+                        STATUS_PENDING,
+                        priority,
+                        job.get("is_intern", False),
+                        json.dumps(experience_info)
+                    ))
+                else:
+                    cursor.execute(f"""
+                        INSERT OR IGNORE INTO target_jobs
+                        (job_id, relevance_score, match_reason, status, priority, is_intern, experience_analysis)
+                        VALUES ({p}, {p}, {p}, {p}, {p}, {p}, {p})
+                    """, (
+                        job["job_id"],
+                        job["score"],
+                        job["reasoning"],
+                        STATUS_PENDING,
+                        priority,
+                        job.get("is_intern", False),
+                        json.dumps(experience_info)
+                    ))
 
-        except Exception as e:
-            print(f"    ⚠ Error inserting job {job['job_id']}: {e}")
+                if cursor.rowcount > 0:
+                    stats['inserted'] += 1
+                    job_ids_to_mark.append(job["job_id"])
 
-    # Mark all processed jobs as evaluated in jobs table
-    if job_ids_to_mark:
-        placeholders = ','.join('?' * len(job_ids_to_mark))
-        cursor.execute(f"UPDATE jobs SET evaluated = 1 WHERE id IN ({placeholders})", job_ids_to_mark)
+            except Exception as e:
+                print(f"    ⚠ Error inserting job {job['job_id']}: {e}")
 
-    conn.commit()
-    conn.close()
+        # Mark all processed jobs as evaluated in jobs table
+        if job_ids_to_mark:
+            placeholders = ','.join([p] * len(job_ids_to_mark))
+            cursor.execute(f"UPDATE jobs SET evaluated = 1 WHERE id IN ({placeholders})", job_ids_to_mark)
 
-    return stats
+        conn.commit()
+
+        return stats
 
 
 def filter_all_jobs():

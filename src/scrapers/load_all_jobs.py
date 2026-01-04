@@ -5,38 +5,45 @@ This script:
 1. Queries companies table for active companies by ATS platform
 2. Fetches job data from respective ATS APIs
 3. Uses ATSMapper to extract and normalize job data
-4. Upserts companies and jobs into SQLite database
+4. Upserts companies and jobs into database
 5. Skips duplicates based on job_url
 """
 
-import sqlite3
+import sys
 from pathlib import Path
 from datetime import datetime, timezone
+
+# Add utils to path for db import
+sys.path.insert(0, str(Path(__file__).parent.parent / "utils"))
+from db import get_connection, is_remote
+
 from ats_mapper import ATSMapper
 from ashby_scraper import fetch_ashby_jobs
 from lever_scraper import fetch_lever_jobs
 from greenhouse_scraper import fetch_greenhouse_jobs
 
 
-DB_PATH = Path(__file__).parent.parent.parent / "data" / "jobs.db"
+def _placeholder():
+    """Return SQL placeholder for current database."""
+    return "%s" if is_remote() else "?"
 
 
 def get_companies_by_platform(platform: str) -> list:
     """Get list of active companies for a specific ATS platform from database."""
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
+    p = _placeholder()
+    with get_connection() as conn:
+        cursor = conn.cursor()
 
-    # Query for active companies on this platform
-    cursor.execute('''
-        SELECT name FROM companies
-        WHERE (ats_platform = ? OR ats_platform = ?)
-        AND is_active = 1
-    ''', (platform, f"{platform}hq"))
+        # Query for active companies on this platform
+        cursor.execute(f'''
+            SELECT name FROM companies
+            WHERE (ats_platform = {p} OR ats_platform = {p})
+            AND is_active = 1
+        ''', (platform, f"{platform}hq"))
 
-    companies = [row[0] for row in cursor.fetchall()]
-    conn.close()
+        companies = [row['name'] if is_remote() else row[0] for row in cursor.fetchall()]
 
-    return companies
+        return companies
 
 
 def upsert_company(cursor, company_name: str, ats_platform: str) -> int:
@@ -45,19 +52,20 @@ def upsert_company(cursor, company_name: str, ats_platform: str) -> int:
 
     Updates last_scraped if company exists, otherwise inserts new.
     """
+    p = _placeholder()
     now = datetime.now(timezone.utc).isoformat()
 
     # Check if company exists
-    cursor.execute('SELECT id FROM companies WHERE name = ?', (company_name,))
+    cursor.execute(f'SELECT id FROM companies WHERE name = {p}', (company_name,))
     result = cursor.fetchone()
 
     if result:
         # Update existing company
-        company_id = result[0]
-        cursor.execute('''
+        company_id = result['id'] if is_remote() else result[0]
+        cursor.execute(f'''
             UPDATE companies
-            SET last_scraped = ?, is_active = 1
-            WHERE id = ?
+            SET last_scraped = {p}, is_active = 1
+            WHERE id = {p}
         ''', (now, company_id))
     else:
         # This shouldn't happen since we're loading from DB, but handle it
@@ -73,6 +81,7 @@ def upsert_jobs(cursor, company_id: int, jobs: list) -> dict:
 
     Returns stats: {'inserted': N, 'skipped': N, 'pre_rejected': N}
     """
+    p = _placeholder()
     stats = {'inserted': 0, 'skipped': 0, 'pre_rejected': 0}
 
     for job in jobs:
@@ -84,19 +93,35 @@ def upsert_jobs(cursor, company_id: int, jobs: list) -> dict:
             rejection_reason = "No description - pre-filtered" if not job_description else None
 
             # Try to insert, ignore if job_url already exists
-            cursor.execute('''
-                INSERT OR IGNORE INTO jobs (company_id, job_url, job_title, job_description, location, posted_date, evaluated, rejection_reason)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            ''', (
-                company_id,
-                job.get('job_url'),
-                job.get('job_title'),
-                job_description,
-                job.get('location'),
-                job.get('posted_date'),
-                evaluated,
-                rejection_reason
-            ))
+            if is_remote():
+                cursor.execute(f'''
+                    INSERT INTO jobs (company_id, job_url, job_title, job_description, location, posted_date, evaluated, rejection_reason)
+                    VALUES ({p}, {p}, {p}, {p}, {p}, {p}, {p}, {p})
+                    ON CONFLICT (job_url) DO NOTHING
+                ''', (
+                    company_id,
+                    job.get('job_url'),
+                    job.get('job_title'),
+                    job_description,
+                    job.get('location'),
+                    job.get('posted_date'),
+                    evaluated,
+                    rejection_reason
+                ))
+            else:
+                cursor.execute(f'''
+                    INSERT OR IGNORE INTO jobs (company_id, job_url, job_title, job_description, location, posted_date, evaluated, rejection_reason)
+                    VALUES ({p}, {p}, {p}, {p}, {p}, {p}, {p}, {p})
+                ''', (
+                    company_id,
+                    job.get('job_url'),
+                    job.get('job_title'),
+                    job_description,
+                    job.get('location'),
+                    job.get('posted_date'),
+                    evaluated,
+                    rejection_reason
+                ))
 
             if cursor.rowcount > 0:
                 if not job_description:
@@ -153,8 +178,12 @@ def load_platform_jobs(platform: str, fetch_function, batch_size: int = 20):
         }
 
     # Connect to database
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        return _load_platform_jobs_impl(conn, cursor, mapper, platform, platform_key, fetch_function, companies, batch_size)
+
+
+def _load_platform_jobs_impl(conn, cursor, mapper, platform, platform_key, fetch_function, companies, batch_size):
 
     total_stats = {
         'companies_processed': 0,
@@ -225,9 +254,8 @@ def load_platform_jobs(platform: str, fetch_function, batch_size: int = 20):
         conn.commit()
         print(f"  → Batch {batch_num}/{num_batches} committed")
 
-    # Final commit
+    # Final commit (context manager will also commit)
     conn.commit()
-    conn.close()
 
     return total_stats
 

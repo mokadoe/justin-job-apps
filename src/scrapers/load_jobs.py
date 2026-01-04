@@ -4,20 +4,27 @@
 This script:
 1. Reads company list from ashby_companies.txt
 2. Fetches job data from Ashby API for each company
-3. Upserts companies and jobs into SQLite database
+3. Upserts companies and jobs into database
 4. Skips duplicates based on job_url
 """
 
-import sqlite3
+import sys
 from pathlib import Path
 from datetime import datetime, timezone
+
+# Add utils to path for db import
+sys.path.insert(0, str(Path(__file__).parent.parent / "utils"))
+from db import get_connection, is_remote
+
 from ats_mapper import ATSMapper
 from ashby_scraper import fetch_ashby_jobs
-
-
-DB_PATH = Path(__file__).parent.parent.parent / "data" / "jobs.db"
 COMPANIES_FILE = Path(__file__).parent.parent.parent / "data" / "ashby_companies.txt"
 ATS_PLATFORM = "ashbyhq"
+
+
+def _placeholder():
+    """Return SQL placeholder for current database."""
+    return "%s" if is_remote() else "?"
 
 
 def load_company_list(filepath: Path) -> list:
@@ -32,28 +39,37 @@ def upsert_company(cursor, company_name: str) -> int:
 
     Updates last_scraped if company exists, otherwise inserts new.
     """
+    p = _placeholder()
     ats_url = f"https://jobs.{ATS_PLATFORM}.com/{company_name}"
     now = datetime.now(timezone.utc).isoformat()
 
     # Check if company exists
-    cursor.execute('SELECT id FROM companies WHERE name = ?', (company_name,))
+    cursor.execute(f'SELECT id FROM companies WHERE name = {p}', (company_name,))
     result = cursor.fetchone()
 
     if result:
         # Update existing company
-        company_id = result[0]
-        cursor.execute('''
+        company_id = result['id'] if is_remote() else result[0]
+        cursor.execute(f'''
             UPDATE companies
-            SET last_scraped = ?, is_active = 1
-            WHERE id = ?
+            SET last_scraped = {p}, is_active = 1
+            WHERE id = {p}
         ''', (now, company_id))
     else:
         # Insert new company
-        cursor.execute('''
-            INSERT INTO companies (name, ats_platform, ats_url, last_scraped)
-            VALUES (?, ?, ?, ?)
-        ''', (company_name, ATS_PLATFORM, ats_url, now))
-        company_id = cursor.lastrowid
+        if is_remote():
+            cursor.execute(f'''
+                INSERT INTO companies (name, ats_platform, ats_url, last_scraped)
+                VALUES ({p}, {p}, {p}, {p})
+                RETURNING id
+            ''', (company_name, ATS_PLATFORM, ats_url, now))
+            company_id = cursor.fetchone()['id']
+        else:
+            cursor.execute(f'''
+                INSERT INTO companies (name, ats_platform, ats_url, last_scraped)
+                VALUES ({p}, {p}, {p}, {p})
+            ''', (company_name, ATS_PLATFORM, ats_url, now))
+            company_id = cursor.lastrowid
 
     return company_id
 
@@ -64,22 +80,37 @@ def upsert_jobs(cursor, company_id: int, jobs: list) -> dict:
 
     Returns stats: {'inserted': N, 'skipped': N}
     """
+    p = _placeholder()
     stats = {'inserted': 0, 'skipped': 0}
 
     for job in jobs:
         try:
             # Try to insert, ignore if job_url already exists
-            cursor.execute('''
-                INSERT OR IGNORE INTO jobs (company_id, job_url, job_title, job_description, location, posted_date)
-                VALUES (?, ?, ?, ?, ?, ?)
-            ''', (
-                company_id,
-                job.get('job_url'),
-                job.get('job_title'),
-                job.get('job_description'),
-                job.get('location'),
-                job.get('posted_date')
-            ))
+            if is_remote():
+                cursor.execute(f'''
+                    INSERT INTO jobs (company_id, job_url, job_title, job_description, location, posted_date)
+                    VALUES ({p}, {p}, {p}, {p}, {p}, {p})
+                    ON CONFLICT (job_url) DO NOTHING
+                ''', (
+                    company_id,
+                    job.get('job_url'),
+                    job.get('job_title'),
+                    job.get('job_description'),
+                    job.get('location'),
+                    job.get('posted_date')
+                ))
+            else:
+                cursor.execute(f'''
+                    INSERT OR IGNORE INTO jobs (company_id, job_url, job_title, job_description, location, posted_date)
+                    VALUES ({p}, {p}, {p}, {p}, {p}, {p})
+                ''', (
+                    company_id,
+                    job.get('job_url'),
+                    job.get('job_title'),
+                    job.get('job_description'),
+                    job.get('location'),
+                    job.get('posted_date')
+                ))
 
             if cursor.rowcount > 0:
                 stats['inserted'] += 1
@@ -109,8 +140,12 @@ def load_ashby_jobs(company_names: list, batch_size: int = 20):
         return
 
     # Connect to database
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        _load_ashby_jobs_impl(conn, cursor, mapper, company_names, batch_size)
+
+
+def _load_ashby_jobs_impl(conn, cursor, mapper, company_names, batch_size):
 
     total_stats = {
         'companies_processed': 0,
@@ -174,9 +209,8 @@ def load_ashby_jobs(company_names: list, batch_size: int = 20):
         conn.commit()
         print(f"  → Batch {batch_num}/{num_batches} committed")
 
-    # Final commit
+    # Final commit (context manager will also commit)
     conn.commit()
-    conn.close()
 
     # Print summary
     print("\n" + "=" * 80)

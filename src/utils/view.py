@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 """Consolidated tool for viewing and analyzing job database."""
 
-import sqlite3
 import sys
 from pathlib import Path
 from collections import Counter
@@ -11,8 +10,7 @@ import re
 # Add parent directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent))
 from constants import STATUS_LABELS, STATUS_PENDING, STATUS_NOT_RELEVANT, STATUS_REVIEWED, STATUS_APPLIED
-
-DB_PATH = Path(__file__).parent.parent.parent / "data" / "jobs.db"
+from db import get_connection, is_remote
 
 
 # ============================================================================
@@ -21,9 +19,12 @@ DB_PATH = Path(__file__).parent.parent.parent / "data" / "jobs.db"
 
 def inspect_database():
     """Display first few rows from each table."""
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    cursor = conn.cursor()
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        _inspect_database_impl(cursor)
+
+
+def _inspect_database_impl(cursor):
 
     # Check companies table
     print("=" * 80)
@@ -38,8 +39,8 @@ def inspect_database():
         print(tabulate(rows, headers=headers, tablefmt="grid"))
 
         # Get total count
-        cursor.execute("SELECT COUNT(*) FROM companies")
-        total = cursor.fetchone()[0]
+        cursor.execute("SELECT COUNT(*) as cnt FROM companies")
+        total = cursor.fetchone()['cnt']
         print(f"\nTotal companies: {total}")
     else:
         print("No companies in database")
@@ -56,8 +57,8 @@ def inspect_database():
         print(tabulate(rows, headers=headers, tablefmt="grid"))
 
         # Get total count
-        cursor.execute("SELECT COUNT(*) FROM jobs")
-        total = cursor.fetchone()[0]
+        cursor.execute("SELECT COUNT(*) as cnt FROM jobs")
+        total = cursor.fetchone()['cnt']
         print(f"\nTotal jobs: {total}")
     else:
         print("No jobs in database")
@@ -82,10 +83,10 @@ def inspect_database():
         rows = []
         for row in target_jobs:
             # Truncate title and reason if too long
-            title = row[2][:40] if len(row[2]) > 40 else row[2]
-            company = row[3][:20] if len(row[3]) > 20 else row[3]
-            reason = row[5][:50] + "..." if len(row[5]) > 50 else row[5]
-            rows.append((row[0], row[1], title, company, f"{row[4]:.2f}", reason))
+            title = row['job_title'][:40] if len(row['job_title']) > 40 else row['job_title']
+            company = row['company'][:20] if len(row['company']) > 20 else row['company']
+            reason = row['match_reason'][:50] + "..." if len(row['match_reason']) > 50 else row['match_reason']
+            rows.append((row['id'], row['job_id'], title, company, f"{row['relevance_score']:.2f}", reason))
 
         print(tabulate(rows, headers=headers, tablefmt="grid"))
 
@@ -98,9 +99,9 @@ def inspect_database():
             FROM target_jobs
         """)
         counts = cursor.fetchone()
-        print(f"\nPending (relevant): {counts[0]}")
-        print(f"Rejected (not relevant): {counts[1]}")
-        print(f"Total filtered: {counts[2]}")
+        print(f"\nPending (relevant): {counts['pending']}")
+        print(f"Rejected (not relevant): {counts['rejected']}")
+        print(f"Total filtered: {counts['total']}")
     else:
         print("No pending jobs yet (run 'make filter' to evaluate jobs)")
 
@@ -130,8 +131,6 @@ def inspect_database():
     else:
         print("No data in database")
 
-    conn.close()
-
 
 # ============================================================================
 # TARGET JOBS VIEWING (formerly view_targets.py and view_targets_stats.py)
@@ -139,71 +138,69 @@ def inspect_database():
 
 def get_filtered_jobs(status_filter=None, limit=None, random_sample=False):
     """Get filtered jobs from target_jobs table."""
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    cursor = conn.cursor()
+    with get_connection() as conn:
+        cursor = conn.cursor()
 
-    # Build query
-    query = """
-        SELECT
-            t.id,
-            t.job_id,
-            j.job_title,
-            c.name as company_name,
-            t.relevance_score,
-            t.match_reason,
-            t.status,
-            j.location,
-            j.job_url,
-            t.added_date
-        FROM target_jobs t
-        JOIN jobs j ON t.job_id = j.id
-        JOIN companies c ON j.company_id = c.id
-    """
+        # Build query - use %s for postgres, ? for sqlite
+        placeholder = "%s" if is_remote() else "?"
 
-    params = []
-    if status_filter is not None:
-        query += " WHERE t.status = ?"
-        params.append(status_filter)
+        query = """
+            SELECT
+                t.id,
+                t.job_id,
+                j.job_title,
+                c.name as company_name,
+                t.relevance_score,
+                t.match_reason,
+                t.status,
+                j.location,
+                j.job_url,
+                t.added_date
+            FROM target_jobs t
+            JOIN jobs j ON t.job_id = j.id
+            JOIN companies c ON j.company_id = c.id
+        """
 
-    if random_sample:
-        query += " ORDER BY RANDOM()"
-    else:
-        query += " ORDER BY t.id DESC"
+        params = []
+        if status_filter is not None:
+            query += f" WHERE t.status = {placeholder}"
+            params.append(status_filter)
 
-    if limit:
-        query += f" LIMIT {limit}"
+        if random_sample:
+            query += " ORDER BY RANDOM()"
+        else:
+            query += " ORDER BY t.id DESC"
 
-    cursor.execute(query, params)
-    jobs = [dict(row) for row in cursor.fetchall()]
-    conn.close()
+        if limit:
+            query += f" LIMIT {limit}"
 
-    return jobs
+        cursor.execute(query, params)
+        jobs = [dict(row) for row in cursor.fetchall()]
+
+        return jobs
 
 
 def get_target_stats():
     """Get statistics about filtered jobs."""
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    cursor = conn.cursor()
+    with get_connection() as conn:
+        cursor = conn.cursor()
 
-    cursor.execute("""
-        SELECT
-            COUNT(*) as total,
-            SUM(CASE WHEN status = 0 THEN 1 ELSE 0 END) as not_relevant,
-            SUM(CASE WHEN status = 1 THEN 1 ELSE 0 END) as pending,
-            SUM(CASE WHEN status = 2 THEN 1 ELSE 0 END) as reviewed,
-            SUM(CASE WHEN status = 3 THEN 1 ELSE 0 END) as applied,
-            AVG(CASE WHEN status = 1 THEN relevance_score ELSE NULL END) as avg_score_relevant,
-            AVG(CASE WHEN status = 0 THEN relevance_score ELSE NULL END) as avg_score_rejected
-        FROM target_jobs
-    """)
+        cursor.execute("""
+            SELECT
+                COUNT(*) as total,
+                SUM(CASE WHEN status = 0 THEN 1 ELSE 0 END) as not_relevant,
+                SUM(CASE WHEN status = 1 THEN 1 ELSE 0 END) as pending,
+                SUM(CASE WHEN status = 2 THEN 1 ELSE 0 END) as reviewed,
+                SUM(CASE WHEN status = 3 THEN 1 ELSE 0 END) as applied,
+                AVG(CASE WHEN status = 1 THEN relevance_score ELSE NULL END) as avg_score_relevant,
+                AVG(CASE WHEN status = 0 THEN relevance_score ELSE NULL END) as avg_score_rejected
+            FROM target_jobs
+        """)
 
-    row = cursor.fetchone()
-    stats = dict(row) if row else {}
-    conn.close()
+        row = cursor.fetchone()
+        stats = dict(row) if row else {}
 
-    return stats
+        return stats
 
 
 def display_jobs(jobs, show_url=False):
@@ -321,20 +318,22 @@ def view_targets(args):
 
 def analyze_jobs():
     """Analyze job data and display insights."""
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    cursor = conn.cursor()
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        _analyze_jobs_impl(cursor)
 
+
+def _analyze_jobs_impl(cursor):
     print("=" * 80)
     print("JOB DATABASE ANALYSIS")
     print("=" * 80)
 
     # Total counts
-    cursor.execute("SELECT COUNT(*) FROM companies")
-    total_companies = cursor.fetchone()[0]
+    cursor.execute("SELECT COUNT(*) as cnt FROM companies")
+    total_companies = cursor.fetchone()['cnt']
 
-    cursor.execute("SELECT COUNT(*) FROM jobs")
-    total_jobs = cursor.fetchone()[0]
+    cursor.execute("SELECT COUNT(*) as cnt FROM jobs")
+    total_jobs = cursor.fetchone()['cnt']
 
     print(f"\nTotal Companies: {total_companies}")
     print(f"Total Jobs: {total_jobs}")
@@ -484,8 +483,6 @@ def analyze_jobs():
     print("  3. Level: Exclude Senior, Staff, Principal, Manager")
     print("  4. Keywords: New grad, Junior, Entry-level (or no seniority indicator)")
 
-    conn.close()
-
 
 # ============================================================================
 # MAIN CLI
@@ -527,10 +524,13 @@ Make shortcuts:
 
 def main():
     """Main CLI entry point."""
-    if not DB_PATH.exists():
-        print(f"Database not found at {DB_PATH}")
-        print("Run 'make init' and 'make load' first")
-        sys.exit(1)
+    # For local SQLite, check if DB exists
+    if not is_remote():
+        db_path = Path(__file__).parent.parent.parent / "data" / "jobs.db"
+        if not db_path.exists():
+            print(f"Database not found at {db_path}")
+            print("Run 'make init' and 'make load' first")
+            sys.exit(1)
 
     args = sys.argv[1:]
 

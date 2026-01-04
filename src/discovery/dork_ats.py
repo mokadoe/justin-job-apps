@@ -15,15 +15,25 @@ import argparse
 import os
 import sys
 import json
-import sqlite3
 import requests
 import re
+# Note: sqlite3 removed - using db.get_connection() instead
 from datetime import datetime
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from dotenv import load_dotenv
 load_dotenv()
+
+# Add utils to path for db import
+sys.path.insert(0, str(Path(__file__).parent.parent / "utils"))
+from db import get_connection, is_remote
+
+
+def _placeholder():
+    """Return SQL placeholder for current database."""
+    return "%s" if is_remote() else "?"
+
 
 # Configuration
 ATS_PLATFORMS = {
@@ -210,32 +220,32 @@ def insert_companies_batch(companies: list[dict]) -> dict:
     if not companies:
         return {'added': 0, 'skipped': 0}
 
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-
+    p = _placeholder()
     stats = {'added': 0, 'skipped': 0}
 
-    for company in companies:
-        # Check if exists
-        cursor.execute("SELECT id FROM companies WHERE name = ?", (company['name'],))
-        if cursor.fetchone():
-            stats['skipped'] += 1
-        else:
-            # discovered_date uses DEFAULT CURRENT_TIMESTAMP from schema
-            cursor.execute("""
-                INSERT INTO companies (name, discovery_source, ats_platform, ats_slug, ats_url, is_active)
-                VALUES (?, ?, ?, ?, ?, 1)
-            """, (
-                company['name'],
-                company['discovery_source'],
-                company['ats_platform'],
-                company['ats_slug'],
-                company['ats_url'],
-            ))
-            stats['added'] += 1
+    with get_connection() as conn:
+        cursor = conn.cursor()
 
-    conn.commit()
-    conn.close()
+        for company in companies:
+            # Check if exists
+            cursor.execute(f"SELECT id FROM companies WHERE name = {p}", (company['name'],))
+            if cursor.fetchone():
+                stats['skipped'] += 1
+            else:
+                # discovered_date uses DEFAULT CURRENT_TIMESTAMP from schema
+                cursor.execute(f"""
+                    INSERT INTO companies (name, discovery_source, ats_platform, ats_slug, ats_url, is_active)
+                    VALUES ({p}, {p}, {p}, {p}, {p}, 1)
+                """, (
+                    company['name'],
+                    company['discovery_source'],
+                    company['ats_platform'],
+                    company['ats_slug'],
+                    company['ats_url'],
+                ))
+                stats['added'] += 1
+
+        conn.commit()
 
     return stats
 

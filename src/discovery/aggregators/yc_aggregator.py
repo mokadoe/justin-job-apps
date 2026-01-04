@@ -12,7 +12,6 @@ YC companies are high-quality targets:
 """
 
 import sys
-import sqlite3
 import re
 import requests
 from pathlib import Path
@@ -22,7 +21,14 @@ import time
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 from scrapers.ats_utils import extract_slug_from_ats_url
 
-DB_PATH = Path(__file__).parent.parent.parent.parent / "data" / "jobs.db"
+# Add utils to path for db import
+sys.path.insert(0, str(Path(__file__).parent.parent.parent / "utils"))
+from db import get_connection, is_remote
+
+
+def _placeholder():
+    """Return SQL placeholder for current database."""
+    return "%s" if is_remote() else "?"
 
 # YC uses Algolia to serve company data
 ALGOLIA_APP_ID = "45BWZJ1SGC"
@@ -171,9 +177,7 @@ def add_companies_to_db(companies_data: list, max_to_check: int = 100):
         companies_data: List of (company_name, website) tuples
         max_to_check: Maximum number of companies to check for ATS
     """
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-
+    p = _placeholder()
     stats = {
         'total': len(companies_data),
         'added': 0,
@@ -185,39 +189,41 @@ def add_companies_to_db(companies_data: list, max_to_check: int = 100):
 
     print(f"Checking first {max_to_check} companies for ATS...")
 
-    for idx, (company_name, website) in enumerate(companies_data):
-        # Only check ATS for first N companies
-        if idx < max_to_check:
-            ats_platform, ats_url = try_ats_detection(company_name, website)
-            stats['checked_ats'] += 1
-            if idx % 10 == 0:
-                print(f"  {idx}/{max_to_check}...")
-        else:
-            ats_platform = 'unknown'
-            ats_url = website
+    with get_connection() as conn:
+        cursor = conn.cursor()
 
-        is_active = 1 if ats_platform in SUPPORTED_ATS else 0
-        ats_slug = extract_slug_from_ats_url(ats_platform, ats_url)
+        for idx, (company_name, website) in enumerate(companies_data):
+            # Only check ATS for first N companies
+            if idx < max_to_check:
+                ats_platform, ats_url = try_ats_detection(company_name, website)
+                stats['checked_ats'] += 1
+                if idx % 10 == 0:
+                    print(f"  {idx}/{max_to_check}...")
+            else:
+                ats_platform = 'unknown'
+                ats_url = website
 
-        if is_active:
-            stats['supported'] += 1
-        else:
-            stats['unsupported'] += 1
+            is_active = 1 if ats_platform in SUPPORTED_ATS else 0
+            ats_slug = extract_slug_from_ats_url(ats_platform, ats_url)
 
-        cursor.execute("SELECT id FROM companies WHERE name = ?", (company_name,))
-        existing = cursor.fetchone()
+            if is_active:
+                stats['supported'] += 1
+            else:
+                stats['unsupported'] += 1
 
-        if existing:
-            stats['skipped_exists'] += 1
-        else:
-            cursor.execute("""
-                INSERT INTO companies (name, discovery_source, ats_platform, ats_slug, ats_url, is_active, website)
-                VALUES (?, 'yc', ?, ?, ?, ?, ?)
-            """, (company_name, ats_platform, ats_slug, ats_url, is_active, website))
-            stats['added'] += 1
+            cursor.execute(f"SELECT id FROM companies WHERE name = {p}", (company_name,))
+            existing = cursor.fetchone()
 
-    conn.commit()
-    conn.close()
+            if existing:
+                stats['skipped_exists'] += 1
+            else:
+                cursor.execute(f"""
+                    INSERT INTO companies (name, discovery_source, ats_platform, ats_slug, ats_url, is_active, website)
+                    VALUES ({p}, 'yc', {p}, {p}, {p}, {p}, {p})
+                """, (company_name, ats_platform, ats_slug, ats_url, is_active, website))
+                stats['added'] += 1
+
+        conn.commit()
 
     return stats
 

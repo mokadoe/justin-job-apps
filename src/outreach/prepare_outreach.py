@@ -11,9 +11,9 @@ This script:
 Run this when you're ready to prepare outreach for one company.
 """
 
-import sqlite3
 import json
 import os
+import sys
 import random
 from pathlib import Path
 from anthropic import Anthropic
@@ -21,7 +21,16 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-DB_PATH = Path(__file__).parent.parent.parent / "data" / "jobs.db"
+# Add parent directory to path for imports
+sys.path.insert(0, str(Path(__file__).parent.parent))
+from utils.db import get_connection, is_remote
+
+
+def _placeholder():
+    """Return SQL placeholder for current database."""
+    return "%s" if is_remote() else "?"
+
+
 PROFILE_PATH = Path(__file__).parent.parent.parent / "profile.json"
 
 client = Anthropic(api_key=os.environ.get("ANTHROPIC_API_KEY"))
@@ -75,33 +84,31 @@ def get_random_company_with_contact():
     Returns company info + a random priority contact.
     Filters out contacts with invalid/unusual names.
     """
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    cursor = conn.cursor()
+    with get_connection() as conn:
+        cursor = conn.cursor()
 
-    # Get all priority contacts, ordered by title priority and confidence
-    # Title priority: recruiter/hiring > hiring manager > CTO > CEO
-    cursor.execute("""
-        SELECT c.id as company_id, c.name as company_name, c.website,
-               co.id as contact_id, co.name as contact_name, co.title, co.linkedin_url,
-               co.match_confidence
-        FROM companies c
-        JOIN contacts co ON c.id = co.company_id
-        WHERE co.is_priority = 1
-        ORDER BY
-            CASE
-                WHEN LOWER(co.title) LIKE '%recruit%' OR LOWER(co.title) LIKE '%talent%' OR LOWER(co.title) LIKE '%hiring%' THEN 0
-                WHEN LOWER(co.title) LIKE '%hiring manager%' OR LOWER(co.title) LIKE '%engineering manager%' OR LOWER(co.title) LIKE '%eng manager%' THEN 1
-                WHEN LOWER(co.title) LIKE '%cto%' OR LOWER(co.title) LIKE '%chief technology%' OR LOWER(co.title) LIKE '%vp engineer%' OR LOWER(co.title) LIKE '%vp of engineer%' THEN 2
-                WHEN LOWER(co.title) LIKE '%ceo%' OR LOWER(co.title) LIKE '%chief executive%' OR LOWER(co.title) LIKE '%founder%' THEN 3
-                ELSE 4
-            END,
-            CASE co.match_confidence WHEN 'high' THEN 0 ELSE 1 END,
-            RANDOM()
-    """)
+        # Get all priority contacts, ordered by title priority and confidence
+        # Title priority: recruiter/hiring > hiring manager > CTO > CEO
+        cursor.execute("""
+            SELECT c.id as company_id, c.name as company_name, c.website,
+                   co.id as contact_id, co.name as contact_name, co.title, co.linkedin_url,
+                   co.match_confidence
+            FROM companies c
+            JOIN contacts co ON c.id = co.company_id
+            WHERE co.is_priority = 1
+            ORDER BY
+                CASE
+                    WHEN LOWER(co.title) LIKE '%recruit%' OR LOWER(co.title) LIKE '%talent%' OR LOWER(co.title) LIKE '%hiring%' THEN 0
+                    WHEN LOWER(co.title) LIKE '%hiring manager%' OR LOWER(co.title) LIKE '%engineering manager%' OR LOWER(co.title) LIKE '%eng manager%' THEN 1
+                    WHEN LOWER(co.title) LIKE '%cto%' OR LOWER(co.title) LIKE '%chief technology%' OR LOWER(co.title) LIKE '%vp engineer%' OR LOWER(co.title) LIKE '%vp of engineer%' THEN 2
+                    WHEN LOWER(co.title) LIKE '%ceo%' OR LOWER(co.title) LIKE '%chief executive%' OR LOWER(co.title) LIKE '%founder%' THEN 3
+                    ELSE 4
+                END,
+                CASE co.match_confidence WHEN 'high' THEN 0 ELSE 1 END,
+                RANDOM()
+        """)
 
-    rows = cursor.fetchall()
-    conn.close()
+        rows = cursor.fetchall()
 
     if not rows:
         return None, None
@@ -143,20 +150,19 @@ def get_company_context(company_id):
     - job_description: full description of the primary job (for personalization)
     - summary: brief text summary
     """
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    cursor = conn.cursor()
+    p = _placeholder()
+    with get_connection() as conn:
+        cursor = conn.cursor()
 
-    cursor.execute("""
-        SELECT j.job_title, j.job_description, t.match_reason
-        FROM jobs j
-        LEFT JOIN target_jobs t ON j.id = t.job_id
-        WHERE j.company_id = ? AND t.status = 1
-        LIMIT 3
-    """, (company_id,))
+        cursor.execute(f"""
+            SELECT j.job_title, j.job_description, t.match_reason
+            FROM jobs j
+            LEFT JOIN target_jobs t ON j.id = t.job_id
+            WHERE j.company_id = {p} AND t.status = 1
+            LIMIT 3
+        """, (company_id,))
 
-    jobs = [dict(row) for row in cursor.fetchall()]
-    conn.close()
+        jobs = [dict(row) for row in cursor.fetchall()]
 
     if not jobs:
         return {
@@ -188,38 +194,41 @@ def get_company_context(company_id):
 
 def get_stored_person_context(contact_id):
     """Get stored person context from database."""
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
+    p = _placeholder()
+    with get_connection() as conn:
+        cursor = conn.cursor()
 
-    cursor.execute(
-        "SELECT person_context, context_source FROM contacts WHERE id = ?",
-        (contact_id,)
-    )
-    row = cursor.fetchone()
-    conn.close()
+        cursor.execute(
+            f"SELECT person_context, context_source FROM contacts WHERE id = {p}",
+            (contact_id,)
+        )
+        row = cursor.fetchone()
 
-    if row and row[0]:
-        return {
-            'context': row[0],
-            'source': row[1],
-            'confidence': 'high'  # Stored = already validated
-        }
+    if row:
+        person_context = row['person_context'] if is_remote() else row[0]
+        context_source = row['context_source'] if is_remote() else row[1]
+        if person_context:
+            return {
+                'context': person_context,
+                'source': context_source,
+                'confidence': 'high'  # Stored = already validated
+            }
     return None
 
 
 def store_person_context(contact_id, context, source):
     """Store person context in database."""
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
+    p = _placeholder()
+    with get_connection() as conn:
+        cursor = conn.cursor()
 
-    cursor.execute("""
-        UPDATE contacts
-        SET person_context = ?, context_source = ?
-        WHERE id = ?
-    """, (context, source, contact_id))
+        cursor.execute(f"""
+            UPDATE contacts
+            SET person_context = {p}, context_source = {p}
+            WHERE id = {p}
+        """, (context, source, contact_id))
 
-    conn.commit()
-    conn.close()
+        conn.commit()
 
 
 def fetch_linkedin_context(linkedin_url):

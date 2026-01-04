@@ -21,7 +21,7 @@ Setup required:
    GOOGLE_CSE_ID=your_search_engine_id_here
 """
 
-import sqlite3
+import sys
 import requests
 import re
 import os
@@ -31,9 +31,16 @@ from time import sleep
 from tabulate import tabulate
 from dotenv import load_dotenv
 
+# Add utils to path for db import
+sys.path.insert(0, str(Path(__file__).parent.parent / "utils"))
+from db import get_connection, is_remote
+
 load_dotenv()
 
-DB_PATH = Path(__file__).parent.parent.parent / "data" / "jobs.db"
+
+def _placeholder():
+    """Return SQL placeholder for current database."""
+    return "%s" if is_remote() else "?"
 
 # Google Custom Search API
 GOOGLE_API_KEY = os.environ.get("GOOGLE_API_KEY")
@@ -233,19 +240,22 @@ def get_employee_count(company_id, company_name, auto_lookup=True):
     Returns:
         Tuple of (employee_count, source) where source is 'linkedin', 'manual', 'job_proxy', or None
     """
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
+    p = _placeholder()
+    with get_connection() as conn:
+        cursor = conn.cursor()
 
-    # Check if we already have it
-    cursor.execute(
-        "SELECT employee_count, employee_count_source FROM companies WHERE id = ?",
-        (company_id,)
-    )
-    row = cursor.fetchone()
-    conn.close()
+        # Check if we already have it
+        cursor.execute(
+            f"SELECT employee_count, employee_count_source FROM companies WHERE id = {p}",
+            (company_id,)
+        )
+        row = cursor.fetchone()
 
-    if row and row[0] is not None:
-        return (row[0], row[1])
+    if row:
+        count = row['employee_count'] if is_remote() else row[0]
+        source = row['employee_count_source'] if is_remote() else row[1]
+        if count is not None:
+            return (count, source)
 
     # If auto_lookup disabled, return None
     if not auto_lookup:
@@ -277,17 +287,17 @@ def get_employee_count(company_id, company_name, auto_lookup=True):
 
 def store_employee_count(company_id, count, source):
     """Store employee count in database."""
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
+    p = _placeholder()
+    with get_connection() as conn:
+        cursor = conn.cursor()
 
-    cursor.execute("""
-        UPDATE companies
-        SET employee_count = ?, employee_count_source = ?
-        WHERE id = ?
-    """, (count, source, company_id))
+        cursor.execute(f"""
+            UPDATE companies
+            SET employee_count = {p}, employee_count_source = {p}
+            WHERE id = {p}
+        """, (count, source, company_id))
 
-    conn.commit()
-    conn.close()
+        conn.commit()
 
 
 def get_company_size(company_id, company_name, use_linkedin=None):
@@ -344,47 +354,41 @@ def get_company_size(company_id, company_name, use_linkedin=None):
 
 def get_job_count_for_company(company_id):
     """Get the number of jobs for a company."""
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
+    p = _placeholder()
+    with get_connection() as conn:
+        cursor = conn.cursor()
 
-    cursor.execute(
-        "SELECT COUNT(*) FROM jobs WHERE company_id = ?",
-        (company_id,)
-    )
-    job_count = cursor.fetchone()[0]
-    conn.close()
-
-    return job_count
+        cursor.execute(
+            f"SELECT COUNT(*) as cnt FROM jobs WHERE company_id = {p}",
+            (company_id,)
+        )
+        result = cursor.fetchone()
+        return result['cnt'] if is_remote() else result[0]
 
 
 def get_companies_with_pending_jobs(limit=None):
     """Get companies that have pending jobs."""
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    cursor = conn.cursor()
+    with get_connection() as conn:
+        cursor = conn.cursor()
 
-    query = """
-        SELECT DISTINCT c.id, c.name, c.ats_url
-        FROM companies c
-        JOIN jobs j ON c.id = j.company_id
-        JOIN target_jobs t ON j.id = t.job_id
-        WHERE t.status = 1
-        ORDER BY (
-            SELECT COUNT(*)
-            FROM target_jobs t2
-            JOIN jobs j2 ON t2.job_id = j2.id
-            WHERE j2.company_id = c.id AND t2.status = 1
-        ) DESC
-    """
+        # Use a subquery with GROUP BY for PostgreSQL compatibility
+        query = """
+            SELECT c.id, c.name, c.ats_url, COUNT(t.id) as pending_count
+            FROM companies c
+            JOIN jobs j ON c.id = j.company_id
+            JOIN target_jobs t ON j.id = t.job_id
+            WHERE t.status = 1
+            GROUP BY c.id, c.name, c.ats_url
+            ORDER BY pending_count DESC
+        """
 
-    if limit:
-        query += f" LIMIT {limit}"
+        if limit:
+            query += f" LIMIT {limit}"
 
-    cursor.execute(query)
-    companies = [dict(row) for row in cursor.fetchall()]
-    conn.close()
+        cursor.execute(query)
+        companies = [dict(row) for row in cursor.fetchall()]
 
-    return companies
+        return companies
 
 
 def extract_domain_from_ats_url(ats_url):
@@ -882,17 +886,17 @@ def extract_people_from_page(url):
 
 def store_website(company_id, website):
     """Update company record with discovered website."""
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
+    p = _placeholder()
+    with get_connection() as conn:
+        cursor = conn.cursor()
 
-    cursor.execute("""
-        UPDATE companies
-        SET website = ?
-        WHERE id = ?
-    """, (website, company_id))
+        cursor.execute(f"""
+            UPDATE companies
+            SET website = {p}
+            WHERE id = {p}
+        """, (website, company_id))
 
-    conn.commit()
-    conn.close()
+        conn.commit()
 
 
 def store_contact(company_id, name, title, linkedin_url, is_priority, match_confidence='medium'):
@@ -912,19 +916,26 @@ def store_contact(company_id, name, title, linkedin_url, is_priority, match_conf
     Returns:
         True if inserted, False if already existed
     """
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
+    p = _placeholder()
+    with get_connection() as conn:
+        cursor = conn.cursor()
 
-    cursor.execute("""
-        INSERT OR IGNORE INTO contacts (company_id, name, title, linkedin_url, is_priority, match_confidence)
-        VALUES (?, ?, ?, ?, ?, ?)
-    """, (company_id, name, title, linkedin_url, is_priority, match_confidence))
+        if is_remote():
+            cursor.execute(f"""
+                INSERT INTO contacts (company_id, name, title, linkedin_url, is_priority, match_confidence)
+                VALUES ({p}, {p}, {p}, {p}, {p}, {p})
+                ON CONFLICT (company_id, name) DO NOTHING
+            """, (company_id, name, title, linkedin_url, is_priority, match_confidence))
+        else:
+            cursor.execute(f"""
+                INSERT OR IGNORE INTO contacts (company_id, name, title, linkedin_url, is_priority, match_confidence)
+                VALUES ({p}, {p}, {p}, {p}, {p}, {p})
+            """, (company_id, name, title, linkedin_url, is_priority, match_confidence))
 
-    rows_affected = cursor.rowcount
-    conn.commit()
-    conn.close()
+        rows_affected = cursor.rowcount
+        conn.commit()
 
-    return rows_affected > 0  # True if inserted, False if already existed
+        return rows_affected > 0  # True if inserted, False if already existed
 
 
 def discover_contacts_for_companies(companies, use_linkedin_for_size=None):

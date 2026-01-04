@@ -4,6 +4,8 @@
 import sqlite3
 from pathlib import Path
 
+from db import is_remote
+
 # Paths
 DB_PATH = Path(__file__).parent.parent.parent / "data" / "jobs.db"
 SCHEMA_PATH = Path(__file__).parent.parent.parent / "schemas" / "jobs.sql"
@@ -14,6 +16,12 @@ def init_database(force=False):
     Args:
         force: If True, delete existing database and recreate
     """
+    # PostgreSQL schema is managed by agent/jobs_db.py
+    if is_remote():
+        print("Remote database detected - schema managed by agent/jobs_db.py")
+        print("Run the agent service to initialize PostgreSQL tables")
+        return
+
     # Ensure data directory exists
     DB_PATH.parent.mkdir(exist_ok=True)
 
