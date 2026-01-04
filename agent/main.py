@@ -43,6 +43,7 @@ app = FastAPI(lifespan=lifespan)
 sessions: dict[str, ClaudeSDKClient] = {}
 session_models: dict[str, str] = {}  # Track model per session
 session_locks: dict[str, asyncio.Lock] = {}
+running_tasks: dict[str, asyncio.Task] = {}  # Track running requests for abort
 
 AVAILABLE_MODELS = [
     "claude-haiku-4-5-20251001",
@@ -169,8 +170,25 @@ async def collect_response(session_id: str, prompt: str, model: str = None) -> l
     return events
 
 
-async def stream_events(events: list[dict]):
-    """Stream pre-collected events."""
+async def stream_with_heartbeat(session_id: str, prompt: str, model: str = None):
+    """Stream response with periodic heartbeats while processing."""
+    import asyncio
+
+    # Start collecting in background
+    events_future = asyncio.ensure_future(collect_response(session_id, prompt, model))
+
+    # Send heartbeats while waiting
+    heartbeat_count = 0
+    while not events_future.done():
+        heartbeat_count += 1
+        dots = "." * ((heartbeat_count % 3) + 1)
+        yield {"event": "thinking", "data": json.dumps({"status": f"thinking{dots}"})}
+        await asyncio.sleep(1.0)
+
+    # Get the collected events
+    events = await events_future
+
+    # Stream the actual response
     for event in events:
         yield event
 
@@ -181,9 +199,7 @@ async def chat(session_id: str, request: Request):
     body = await request.json()
     prompt = body.get("prompt", "")
     model = body.get("model")  # Optional: only used when creating new session
-    # Collect all events first, then stream them (avoids generator issues)
-    events = await collect_response(session_id, prompt, model)
-    return EventSourceResponse(stream_events(events))
+    return EventSourceResponse(stream_with_heartbeat(session_id, prompt, model))
 
 
 @app.delete("/session/{session_id}")
@@ -212,6 +228,33 @@ async def check_session(session_id: str):
         "session_id": session_id,
         "model": session_models.get(session_id),
     }
+
+
+@app.post("/session/{session_id}/abort")
+async def abort_session(session_id: str):
+    """Abort any running request for this session."""
+    aborted = False
+
+    # Cancel running task if exists
+    if session_id in running_tasks:
+        task = running_tasks[session_id]
+        if not task.done():
+            task.cancel()
+            print(f"[{session_id[:8]}] Task cancelled")
+            aborted = True
+        del running_tasks[session_id]
+
+    # Disconnect and remove SDK client to stop any in-progress request
+    if session_id in sessions:
+        try:
+            await sessions[session_id].disconnect()
+            print(f"[{session_id[:8]}] Client disconnected")
+        except Exception as e:
+            print(f"[{session_id[:8]}] Disconnect error: {e}")
+        del sessions[session_id]
+        aborted = True
+
+    return {"aborted": aborted, "session_id": session_id}
 
 
 @app.get("/models")
@@ -337,6 +380,8 @@ HTML = """<!DOCTYPE html>
         button { padding: 0.75rem 1.5rem; border: none; border-radius: 6px; background: #4a4a8a; color: #fff; cursor: pointer; font-size: 1rem; }
         button:hover { background: #5a5a9a; }
         button:disabled { opacity: 0.5; cursor: not-allowed; }
+        #stop { background: #8a4a4a; }
+        #stop:hover { background: #9a5a5a; }
         pre { white-space: pre-wrap; word-break: break-word; margin: 0; }
         #debug { font-size: 0.7rem; color: #666; padding: 0.25rem 1rem; background: #0a0a1a; font-family: monospace; display: flex; align-items: center; gap: 1.5rem; }
         #debug span { color: #888; }
@@ -398,6 +443,7 @@ HTML = """<!DOCTYPE html>
         <div id="input-area">
             <input id="prompt" type="text" placeholder="Ask Claude..." autofocus>
             <button id="send">Send</button>
+            <button id="stop" style="display:none;">Stop</button>
         </div>
         <div id="debug">
             <div>Session: <span id="session-display">-</span></div>
@@ -408,6 +454,7 @@ HTML = """<!DOCTYPE html>
         const chat = document.getElementById('chat');
         const promptInput = document.getElementById('prompt');
         const sendBtn = document.getElementById('send');
+        const stopBtn = document.getElementById('stop');
         const modelSelect = document.getElementById('model-select');
 
         // Check URL for session param, otherwise create new
@@ -415,6 +462,26 @@ HTML = """<!DOCTYPE html>
         let sessionId = urlParams.get('session') || crypto.randomUUID();
         let currentAssistant = null;
         let currentToolContainer = null;
+        let abortController = null;
+
+        function setRunningState(running) {
+            sendBtn.disabled = running;
+            promptInput.disabled = running;
+            sendBtn.style.display = running ? 'none' : 'block';
+            stopBtn.style.display = running ? 'block' : 'none';
+            promptInput.placeholder = running ? 'Running...' : 'Ask Claude...';
+        }
+
+        function stopRequest() {
+            if (abortController) {
+                abortController.abort();
+                abortController = null;
+            }
+            setRunningState(false);
+            promptInput.focus();
+        }
+
+        stopBtn.onclick = stopRequest;
 
         function addToolMsg(text) {
             if (!currentToolContainer) {
@@ -639,19 +706,19 @@ HTML = """<!DOCTYPE html>
         async function runCommand(text) {
             addMsg(text, 'user');
             promptInput.value = '';
-            promptInput.disabled = true;
-            promptInput.placeholder = 'Running command...';
-            sendBtn.disabled = true;
+            setRunningState(true);
             sessionStarted = true;
 
             // Create system message for progress
             let systemMsg = null;
+            abortController = new AbortController();
 
             try {
                 const response = await fetch('/command/' + sessionId, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ text: text })
+                    body: JSON.stringify({ text: text }),
+                    signal: abortController.signal
                 });
 
                 if (!response.ok) {
@@ -693,11 +760,12 @@ HTML = """<!DOCTYPE html>
                 }
                 loadSessions(); // Refresh session list
             } catch (err) {
-                addMsg('Error: ' + err.message, 'error');
+                if (err.name !== 'AbortError') {
+                    addMsg('Error: ' + err.message, 'error');
+                }
             } finally {
-                sendBtn.disabled = false;
-                promptInput.disabled = false;
-                promptInput.placeholder = 'Ask Claude...';
+                abortController = null;
+                setRunningState(false);
                 promptInput.focus();
             }
         }
@@ -713,13 +781,12 @@ HTML = """<!DOCTYPE html>
 
             addMsg(text, 'user');
             promptInput.value = '';
-            promptInput.disabled = true;
-            promptInput.placeholder = 'Waiting for response...';
-            sendBtn.disabled = true;
+            setRunningState(true);
             currentAssistant = null;
             currentToolContainer = null;
 
             sessionStarted = true;
+            abortController = new AbortController();
 
             // Show loading indicator
             const loadingMsg = addMsg('Thinking', 'loading');
@@ -728,7 +795,8 @@ HTML = """<!DOCTYPE html>
                 const response = await fetch('/chat/' + sessionId, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ prompt: text, model: modelSelect.value })
+                    body: JSON.stringify({ prompt: text, model: modelSelect.value }),
+                    signal: abortController.signal
                 });
 
                 if (!response.ok) {
@@ -760,7 +828,11 @@ HTML = """<!DOCTYPE html>
                         if (line.startsWith('data: ')) {
                             try {
                                 const data = JSON.parse(line.slice(6));
-                                if (data.text) {
+                                if (data.status) {
+                                    // Update thinking indicator
+                                    const pre = loadingMsg.querySelector('pre');
+                                    if (pre) pre.textContent = data.status;
+                                } else if (data.text) {
                                     removeLoading();
                                     closeToolContainer();
                                     if (!currentAssistant) {
