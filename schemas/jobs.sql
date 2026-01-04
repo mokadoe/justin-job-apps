@@ -46,6 +46,7 @@ CREATE TABLE IF NOT EXISTS target_jobs (
 
 -- Contacts table (key people at companies)
 -- is_priority: 1=founder/CEO/CTO (decision maker), 0=other engineering leadership
+-- match_confidence: 'high' (exact company match), 'medium' (likely match)
 CREATE TABLE IF NOT EXISTS contacts (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     company_id INTEGER NOT NULL,
@@ -53,6 +54,7 @@ CREATE TABLE IF NOT EXISTS contacts (
     title TEXT,
     linkedin_url TEXT,
     is_priority BOOLEAN DEFAULT 0,
+    match_confidence TEXT DEFAULT 'medium',
     discovered_date TEXT DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (company_id) REFERENCES companies(id),
     UNIQUE(company_id, name)
@@ -71,6 +73,25 @@ CREATE TABLE IF NOT EXISTS messages (
     UNIQUE(company_id)
 );
 
+-- Outreach table (tracks individual outreach attempts)
+-- Supports multiple attempts per company (different contacts, retries, follow-ups)
+-- Status: draft, sent, bounced, replied, no_response
+CREATE TABLE IF NOT EXISTS outreach (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    company_id INTEGER NOT NULL,
+    contact_id INTEGER NOT NULL,
+    email_used TEXT,
+    message_text TEXT NOT NULL,
+    status TEXT DEFAULT 'draft',
+    generated_date TEXT DEFAULT CURRENT_TIMESTAMP,
+    sent_date TEXT,
+    response_date TEXT,
+    response_text TEXT,
+    notes TEXT,
+    FOREIGN KEY (company_id) REFERENCES companies(id),
+    FOREIGN KEY (contact_id) REFERENCES contacts(id)
+);
+
 -- Indexes for fast lookups
 CREATE INDEX IF NOT EXISTS idx_job_url ON jobs(job_url);
 CREATE INDEX IF NOT EXISTS idx_company_id ON jobs(company_id);
@@ -83,3 +104,6 @@ CREATE INDEX IF NOT EXISTS idx_status ON target_jobs(status);
 CREATE INDEX IF NOT EXISTS idx_contact_company ON contacts(company_id);
 CREATE INDEX IF NOT EXISTS idx_contact_priority ON contacts(is_priority);
 CREATE INDEX IF NOT EXISTS idx_message_company ON messages(company_id);
+CREATE INDEX IF NOT EXISTS idx_outreach_company ON outreach(company_id);
+CREATE INDEX IF NOT EXISTS idx_outreach_contact ON outreach(contact_id);
+CREATE INDEX IF NOT EXISTS idx_outreach_status ON outreach(status);
