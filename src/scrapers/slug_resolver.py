@@ -7,13 +7,26 @@ to suggest possible slug variations and tries them automatically.
 """
 
 import os
+import sys
 import requests
 from anthropic import Anthropic
 from typing import List, Optional
 from dotenv import load_dotenv
+from pathlib import Path
 
 # Load environment variables
 load_dotenv()
+
+# Add parent directory to path for imports
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
+# Cost tracking (optional)
+try:
+    from utils.cost_tracker import track_api_call
+except ImportError:
+    # If cost_tracker doesn't exist, use a no-op function
+    def track_api_call(*args, **kwargs):
+        pass
 
 
 def suggest_slugs_batch(company_names: List[str], max_suggestions_per_company: int = 5) -> dict:

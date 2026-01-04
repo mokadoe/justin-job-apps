@@ -25,6 +25,14 @@ import sys
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from utils.constants import STATUS_NOT_RELEVANT, STATUS_PENDING
 
+# Cost tracking (optional)
+try:
+    from utils.cost_tracker import track_api_call
+except ImportError:
+    # If cost_tracker doesn't exist, use a no-op function
+    def track_api_call(*args, **kwargs):
+        pass
+
 # Load environment variables from .env file
 load_dotenv()
 
