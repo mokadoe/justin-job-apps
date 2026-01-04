@@ -63,6 +63,7 @@ CREATE TABLE IF NOT EXISTS target_jobs (
 -- Contacts table (key people at companies)
 -- is_priority: 1=founder/CEO/CTO (decision maker), 0=other engineering leadership
 -- match_confidence: 'high' (exact company match), 'medium' (likely match)
+-- person_context: snippet about the person from web search (for message personalization)
 CREATE TABLE IF NOT EXISTS contacts (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     company_id INTEGER NOT NULL,
@@ -71,6 +72,8 @@ CREATE TABLE IF NOT EXISTS contacts (
     linkedin_url TEXT,
     is_priority BOOLEAN DEFAULT 0,
     match_confidence TEXT DEFAULT 'medium',
+    person_context TEXT,
+    context_source TEXT,
     discovered_date TEXT DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (company_id) REFERENCES companies(id),
     UNIQUE(company_id, name)

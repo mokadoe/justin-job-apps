@@ -1,8 +1,10 @@
 {
   "name": "Justin Chu",
-  "background": "CS + Chemistry student at University of Michigan (graduating May 2026) with ML and full-stack experience from Cove.ai, a Sequoia-backed AI startup. Built React features with AI integration, developed gradient boosting models for drug discovery, and shipped production code with Playwright testing.",
+  "background": "CS + Chem student at University of Michigan (graduating May 2026) with ML and full-stack experience from Cove.ai, a Sequoia-backed AI startup. Built React features with AI integration, developed gradient boosting models for drug discovery, and shipped production code with Playwright testing.",
   "interests": "AI/ML applications, full-stack development, automation tools, and building products that leverage LLMs",
   "looking_for": "New grad software engineering roles at startups building AI-powered products where I can contribute to both frontend and backend development",
   "github_repo": "https://github.com/mokadoe/justin-job-apps",
-  "project_description": "Built an automated job discovery and outreach pipeline using Python, SQLite, Claude API, and Google Custom Search to find new grad roles and identify decision makers at startups"
+  "project_description": "Built an automated job discovery and outreach pipeline using Python, SQLite, Claude API, and Google Custom Search to find new grad roles and identify decision makers at startups",
+  "cove_description": "Led development of AI-driven features and streamlined internal testing infrastructure for Cove's web app and Chrome extension. Built React features with intelligent suggestions based on user content (text and images), shipped quality-of-life tools and interface improvements, and developed comprehensive Playwright test suite. Improved AI assistant response quality by tuning prompts and evaluating LLMs (OpenAI, Claude, Llama).",
+  "drug_discovery_description": "Developed gradient boosting models to predict oral effectiveness of small-molecule degraders, improving binary predictive accuracy by 20%. Investigated key molecular features influencing drug potency using cross-validation and hyperparameter tuning. Built a reproducible data pipeline for cleaning and storing molecular data."
 }
