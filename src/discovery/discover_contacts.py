@@ -540,37 +540,163 @@ def extract_name_from_linkedin_url(url):
     return name
 
 
-def extract_title_from_snippet(snippet, company_name):
+def extract_title_from_snippet(snippet, title_text=""):
     """
-    Extract job title from Google search snippet.
+    Extract job title from Google search snippet and title.
 
-    Example snippet: "John Smith - CEO at OpenAI | LinkedIn"
+    LinkedIn snippets have various formats:
+    - "John Smith - CEO at Company | LinkedIn"
+    - "John Smith - Co-Founder & CTO | LinkedIn"
+    - "View John Smith's profile... CEO · Company · Location"
+    - "Chief Technology Officer at Company - LinkedIn"
+
+    Args:
+        snippet: Google search result snippet
+        title_text: Google search result title (often contains cleaner title info)
+
+    Returns:
+        Extracted title or "Unknown" if not found
     """
-    # Common patterns in LinkedIn snippets
-    # "Name - Title at Company"
-    # "Title at Company - Name"
+    # Combine title and snippet for more context
+    full_text = f"{title_text} {snippet}"
 
-    # Remove "LinkedIn" and other noise
-    snippet = snippet.replace(' | LinkedIn', '').replace('LinkedIn', '')
+    # Clean up LinkedIn noise
+    full_text = re.sub(r'\s*\|\s*LinkedIn', '', full_text)
+    full_text = re.sub(r'\s*-\s*LinkedIn', '', full_text)
+    full_text = full_text.replace('View profile', '').replace("'s profile", '')
 
-    # Look for title indicators
-    title_patterns = [
-        r'(?:CEO|CTO|Founder|Co-Founder|Co-founder|Chief|Head of|VP|Director|Lead|Manager)',
+    # Pattern 1: "Name - Title at Company" or "Name - Title | ..."
+    # The dash before title is common in LinkedIn titles
+    dash_pattern = re.search(
+        r'-\s*([^-|]+?(?:founder|ceo|cto|chief|vp|director|head of|manager|lead|recruiter|recruiting|hiring|engineer)[^-|]*)',
+        full_text,
+        re.IGNORECASE
+    )
+    if dash_pattern:
+        title = dash_pattern.group(1).strip()
+        # Clean up trailing "at Company" or "· Company"
+        title = re.sub(r'\s+(?:at|@|·|•)\s+.*$', '', title, flags=re.IGNORECASE)
+        if title and len(title) < 80:  # Sanity check
+            return title.strip()
+
+    # Pattern 2: "Title at Company" (standalone)
+    at_pattern = re.search(
+        r'((?:co-?)?(?:founder|ceo|cto|chief\s+\w+\s+officer|vp\s+\w+|director\s+of\s+\w+|head\s+of\s+\w+|'
+        r'engineering\s+manager|technical\s+recruiter|recruiter|recruiting\s+\w+)[^·•|]*?)'
+        r'\s+(?:at|@)\s+',
+        full_text,
+        re.IGNORECASE
+    )
+    if at_pattern:
+        title = at_pattern.group(1).strip()
+        if title and len(title) < 80:
+            return title.strip()
+
+    # Pattern 3: Look for title keywords with context
+    # e.g., "Co-Founder & CEO", "VP of Engineering", "Head of Recruiting"
+    keyword_patterns = [
+        r'((?:co-?)?founder(?:\s*[&,]\s*(?:ceo|cto))?)',
+        r'(ceo|chief\s+executive\s+officer)',
+        r'(cto|chief\s+technology\s+officer)',
+        r'(chief\s+\w+\s+officer)',
+        r'(vp\s+(?:of\s+)?(?:engineering|product|technology|people))',
+        r'(director\s+of\s+engineering)',
+        r'(head\s+of\s+(?:engineering|product|recruiting|talent|hiring))',
+        r'(engineering\s+manager)',
+        r'((?:technical\s+)?recruiter)',
+        r'(recruiting\s+(?:manager|lead|coordinator))',
+        r'(talent\s+acquisition(?:\s+\w+)?)',
+        r'(hiring\s+(?:manager|lead))',
     ]
 
-    for pattern in title_patterns:
-        match = re.search(pattern, snippet, re.IGNORECASE)
+    for pattern in keyword_patterns:
+        match = re.search(pattern, full_text, re.IGNORECASE)
         if match:
-            # Try to extract the full title context
-            # Usually appears as "- Title at Company" or "Title at Company -"
-            title_match = re.search(r'-\s*([^-|]+(?:at|@)\s*' + re.escape(company_name) + r')', snippet, re.IGNORECASE)
-            if title_match:
-                return title_match.group(1).strip()
-
-            # Fallback: just return the matched title word
-            return match.group(0)
+            return match.group(1).strip()
 
     return "Unknown"
+
+
+def validate_company_match(snippet, title_text, company_name, person_name=None):
+    """
+    Validate that a search result actually belongs to the target company.
+
+    For small companies with common names (e.g., "Finch"), we need to verify
+    the person actually works at that company, not a different company with
+    a similar name (e.g., "Finch Therapeutics" vs "Finch").
+
+    Args:
+        snippet: Google search result snippet
+        title_text: Google search result title
+        company_name: Target company name to validate
+        person_name: Name of the person (to exclude from matching)
+
+    Returns:
+        Tuple of (is_match: bool, confidence: str)
+        confidence: 'high' (exact match), 'medium' (likely match), 'low' (possible match)
+    """
+    full_text = f"{title_text} {snippet}".lower()
+    company_lower = company_name.lower()
+
+    # Normalize company name (remove common suffixes for matching)
+    company_normalized = re.sub(r'\s*(inc\.?|llc|corp\.?|co\.?|ltd\.?)\s*$', '', company_lower, flags=re.IGNORECASE)
+
+    # If the company name appears in the person's name, this is likely a false positive
+    # e.g., searching for "Anon" company but finding "Auston Anon" (person's last name)
+    if person_name:
+        person_name_lower = person_name.lower()
+        if company_normalized in person_name_lower:
+            # Company name is in the person's name - need stronger evidence
+            # Must have explicit "at Company" pattern to be valid
+            strict_at_pattern = rf'\bat\s+{re.escape(company_normalized)}\b'
+            if re.search(strict_at_pattern, full_text, re.IGNORECASE):
+                return (True, 'medium')
+            return (False, 'low')
+
+    # Check for exact company name match with word boundaries
+    # Pattern: "at Company" or "@ Company" or "· Company" or "• Company"
+    exact_patterns = [
+        rf'\bat\s+{re.escape(company_normalized)}\b',
+        rf'@\s*{re.escape(company_normalized)}\b',
+        rf'[·•]\s*{re.escape(company_normalized)}\b',
+    ]
+
+    for pattern in exact_patterns:
+        if re.search(pattern, full_text, re.IGNORECASE):
+            return (True, 'high')
+
+    # Check for company name appearing as a word (not part of another company)
+    # Avoid "Finch" matching "Finch Therapeutics" by checking word boundaries
+    if len(company_normalized) >= 4:  # Only for reasonably long names
+        word_boundary = rf'\b{re.escape(company_normalized)}\b'
+        if re.search(word_boundary, full_text, re.IGNORECASE):
+            # Check it's not part of a longer company name
+            # e.g., "Finch Therapeutics" should not match "Finch"
+            extended_match = re.search(
+                rf'\b{re.escape(company_normalized)}\s+(?:therapeutics|health|bio|medical|capital|partners|group|holdings|technologies|solutions|labs|ai|software|systems|energy|cloud)',
+                full_text,
+                re.IGNORECASE
+            )
+            if not extended_match:
+                return (True, 'medium')
+
+    # For very short names (< 4 chars), require more context
+    if len(company_normalized) < 4:
+        # Must have "at X" or similar direct association
+        strict_patterns = [
+            rf'\bat\s+{re.escape(company_normalized)}(?:\s|$|[,.])',
+            rf'working\s+(?:at|for)\s+{re.escape(company_normalized)}',
+        ]
+        for pattern in strict_patterns:
+            if re.search(pattern, full_text, re.IGNORECASE):
+                return (True, 'medium')
+        return (False, 'low')
+
+    # If company name appears but without clear context, low confidence
+    if company_normalized in full_text:
+        return (True, 'low')
+
+    return (False, 'low')
 
 
 def is_priority_role(title):
@@ -641,7 +767,19 @@ def discover_people_via_google(company_name, company_id=None, use_linkedin_for_s
                 continue
 
             snippet = item.get('snippet', '')
-            title = extract_title_from_snippet(snippet, company_name)
+            title_text = item.get('title', '')
+
+            # Validate this person actually works at the target company
+            # (avoids false positives like "Finch" matching "Finch Therapeutics"
+            #  or "Anon" matching people with "Anon" in their name)
+            is_match, confidence = validate_company_match(snippet, title_text, company_name, person_name=name)
+
+            if not is_match or confidence == 'low':
+                # Skip low-confidence matches to reduce false positives
+                continue
+
+            # Extract title using improved parsing
+            title = extract_title_from_snippet(snippet, title_text)
 
             # Avoid duplicates
             if not any(p['name'] == name for p in people):
@@ -649,7 +787,8 @@ def discover_people_via_google(company_name, company_id=None, use_linkedin_for_s
                     'name': name,
                     'title': title,
                     'linkedin_url': url,
-                    'is_priority': is_priority_role(title)
+                    'is_priority': is_priority_role(title),
+                    'match_confidence': confidence
                 })
 
         # Be respectful with API rate limits
@@ -756,19 +895,30 @@ def store_website(company_id, website):
     conn.close()
 
 
-def store_contact(company_id, name, title, linkedin_url, is_priority):
+def store_contact(company_id, name, title, linkedin_url, is_priority, match_confidence='medium'):
     """
     Store contact in database.
 
     Uses INSERT OR IGNORE to avoid duplicates (based on company_id + name).
+
+    Args:
+        company_id: Database ID of the company
+        name: Contact's full name
+        title: Job title
+        linkedin_url: LinkedIn profile URL
+        is_priority: True if this is a priority contact (decision maker, etc.)
+        match_confidence: 'high' or 'medium' - how confident we are they work at this company
+
+    Returns:
+        True if inserted, False if already existed
     """
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
 
     cursor.execute("""
-        INSERT OR IGNORE INTO contacts (company_id, name, title, linkedin_url, is_priority)
-        VALUES (?, ?, ?, ?, ?)
-    """, (company_id, name, title, linkedin_url, is_priority))
+        INSERT OR IGNORE INTO contacts (company_id, name, title, linkedin_url, is_priority, match_confidence)
+        VALUES (?, ?, ?, ?, ?, ?)
+    """, (company_id, name, title, linkedin_url, is_priority, match_confidence))
 
     rows_affected = cursor.rowcount
     conn.commit()
@@ -847,7 +997,8 @@ def discover_contacts_for_companies(companies, use_linkedin_for_size=None):
                     person['name'],
                     person['title'],
                     person['linkedin_url'],
-                    person['is_priority']
+                    person['is_priority'],
+                    person.get('match_confidence', 'medium')
                 )
 
                 if is_new:

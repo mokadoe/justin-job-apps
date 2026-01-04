@@ -71,11 +71,13 @@ CONTACT_TARGETING = {
         # Target engineering leadership
         ['CTO', 'Chief Technology Officer', 'VP Engineering'],
         ['Engineering Manager', 'Director of Engineering', 'Head of Engineering'],
+        ['hiring manager'],
     ],
     SIZE_LARGE: [
-        # Target recruiters
+        # Target recruiters and hiring
         ['recruiter', 'talent acquisition', 'technical recruiter'],
         ['recruiting manager', 'recruiting lead'],
+        ['hiring manager', 'hiring lead', 'head of hiring'],
     ],
 }
 
@@ -86,9 +88,10 @@ PRIORITY_ROLE_KEYWORDS = [
     'cto', 'chief technology officer',
     # Engineering leadership (medium companies)
     'vp engineering', 'director of engineering', 'head of engineering',
-    # Recruiters (large companies)
+    # Recruiters and hiring (medium/large companies)
     'recruiter', 'recruiting', 'talent acquisition',
     'technical recruiter',
+    'hiring manager', 'hiring lead', 'head of hiring',
 ]
 
 
