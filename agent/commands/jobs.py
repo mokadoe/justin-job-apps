@@ -38,17 +38,31 @@ async def jobs_stats():
     try:
         import jobs_db
 
+        await jobs_db.init_jobs_db()
         stats = await jobs_db.get_stats()
 
-        yield {
-            "type": "done",
-            "text": f"""Database Statistics:
-  Companies: {stats['companies']}
-  Jobs: {stats['jobs']}
-  Target Jobs: {stats['target_jobs']}
-  Pending: {stats['pending_jobs']}
-  Contacts: {stats['contacts']}"""
-        }
+        # Calculate filtering status
+        total_jobs = stats['jobs']
+        evaluated = stats.get('evaluated_jobs', 0)
+        unevaluated = total_jobs - evaluated
+
+        lines = [
+            "Database Statistics:",
+            f"  Companies: {stats['companies']}",
+            f"  Total Jobs: {total_jobs}",
+            "",
+            "Filtering Status:",
+            f"  Evaluated: {evaluated} ({evaluated/total_jobs*100:.1f}%)" if total_jobs > 0 else "  Evaluated: 0",
+            f"  Unevaluated: {unevaluated} ({unevaluated/total_jobs*100:.1f}%)" if total_jobs > 0 else "  Unevaluated: 0",
+            "",
+            "Target Jobs (passed filter):",
+            f"  Total: {stats['target_jobs']}",
+            f"  Pending: {stats['pending_jobs']}",
+            "",
+            f"Contacts: {stats['contacts']}",
+        ]
+
+        yield {"type": "done", "text": "\n".join(lines)}
 
     except Exception as e:
         yield {"type": "error", "text": f"Failed to get stats: {e}"}

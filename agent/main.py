@@ -211,13 +211,33 @@ async def list_models():
 
 
 @app.get("/sessions")
-async def list_sessions():
-    """List all sessions with preview."""
-    sessions_list = await db.get_all_sessions()
+async def list_sessions(include_archived: bool = False):
+    """List all sessions with preview.
+
+    Args:
+        include_archived: If true, include archived sessions. Default false.
+    """
+    sessions_list = await db.get_all_sessions(include_archived=include_archived)
     # Add indicator for active SDK connections
     for s in sessions_list:
         s["active"] = s["id"] in sessions
     return {"sessions": sessions_list}
+
+
+@app.post("/sessions/{session_id}/archive")
+async def archive_session(session_id: str, request: Request):
+    """Archive or unarchive a session.
+
+    Body: {"archive": true} to archive, {"archive": false} to unarchive
+    """
+    body = await request.json()
+    archive = body.get("archive", True)
+
+    success = await db.archive_session(session_id, archive=archive)
+    if not success:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    return {"success": True, "archived": archive}
 
 
 @app.get("/history/{session_id}")
@@ -268,19 +288,27 @@ HTML = """<!DOCTYPE html>
         #new-session { margin: 0.75rem; padding: 0.5rem; background: #4a4a8a; border: none; border-radius: 6px; color: #fff; cursor: pointer; font-size: 0.9rem; }
         #new-session:hover { background: #5a5a9a; }
         #sessions-list { flex: 1; overflow-y: auto; }
-        .session-link { display: block; padding: 0.6rem 0.75rem; text-decoration: none; color: #aaa; border-bottom: 1px solid #222; }
+        .session-link { display: flex; align-items: flex-start; padding: 0.6rem 0.75rem; text-decoration: none; color: #aaa; border-bottom: 1px solid #222; gap: 0.5rem; }
         .session-link:hover { background: #1a1a2e; }
         .session-link.active { background: #2a2a4a; color: #fff; }
-        .session-id { font-family: monospace; font-size: 0.75rem; color: #666; }
-        .session-preview { display: block; font-size: 0.8rem; margin-top: 0.2rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-        .session-count { font-size: 0.7rem; color: #555; }
+        .session-content { flex: 1; min-width: 0; }
+        .session-preview { display: block; font-size: 0.9rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: #ccc; }
+        .session-count { font-size: 0.7rem; color: #555; margin-top: 0.2rem; display: block; }
         .no-sessions { padding: 1rem; color: #555; font-size: 0.85rem; text-align: center; }
+        #archive-toggle { display: block; padding: 0.5rem 0.75rem; font-size: 0.75rem; color: #555; cursor: pointer; border-top: 1px solid #333; }
+        #archive-toggle input { margin-right: 0.4rem; }
+        .archive-btn { background: none; border: none; color: #444; cursor: pointer; font-size: 1rem; padding: 0.2rem; line-height: 1; opacity: 0; transition: opacity 0.15s; }
+        .session-link:hover .archive-btn { opacity: 1; }
+        .archive-btn:hover { color: #aaa; }
+        .session-link.archived { opacity: 0.5; }
+        .session-link.archived .session-preview::before { content: '[archived] '; color: #666; }
         #main { flex: 1; display: flex; flex-direction: column; }
         #chat { flex: 1; overflow-y: auto; padding: 1rem; }
         .msg { margin: 0.5rem 0; padding: 0.75rem 1rem; border-radius: 8px; max-width: 80%; word-wrap: break-word; }
         .user { background: #4a4a6a; margin-left: auto; }
         .assistant { background: #2a2a4a; }
-        .tool { background: #1a3a2a; font-size: 0.85rem; font-family: monospace; }
+        .tool-container { max-height: 200px; overflow-y: auto; margin: 0.5rem 0; border-radius: 8px; background: #1a3a2a; }
+        .tool { background: #1a3a2a; font-size: 0.8rem; font-family: monospace; margin: 0; border-radius: 0; border-bottom: 1px solid #2a4a3a; padding: 0.5rem 0.75rem; }
         .error { background: #4a1a1a; color: #faa; }
         .loading { background: #2a2a4a; color: #888; }
         .loading::after { content: ''; animation: dots 1.5s infinite; }
@@ -288,6 +316,7 @@ HTML = """<!DOCTYPE html>
         #input-area { display: flex; padding: 1rem; background: #0a0a1a; gap: 0.5rem; }
         #prompt { flex: 1; padding: 0.75rem; border: 1px solid #444; border-radius: 6px; background: #1a1a2e; color: #eee; font-size: 1rem; }
         #prompt:focus { outline: none; border-color: #6a6aaa; }
+        #prompt:disabled { background: #151525; color: #666; cursor: not-allowed; }
         button { padding: 0.75rem 1.5rem; border: none; border-radius: 6px; background: #4a4a8a; color: #fff; cursor: pointer; font-size: 1rem; }
         button:hover { background: #5a5a9a; }
         button:disabled { opacity: 0.5; cursor: not-allowed; }
@@ -313,6 +342,7 @@ HTML = """<!DOCTYPE html>
     <div id="sidebar">
         <button id="new-session" onclick="newSession()">+ New Chat</button>
         <div id="sessions-list"></div>
+        <label id="archive-toggle"><input type="checkbox" id="show-archived" onchange="loadSessions()"> Show archived</label>
         <div id="commands-panel">
             <div class="panel-header">Commands</div>
             <div id="commands-list"></div>
@@ -339,6 +369,25 @@ HTML = """<!DOCTYPE html>
         const urlParams = new URLSearchParams(window.location.search);
         let sessionId = urlParams.get('session') || crypto.randomUUID();
         let currentAssistant = null;
+        let currentToolContainer = null;
+
+        function addToolMsg(text) {
+            if (!currentToolContainer) {
+                currentToolContainer = document.createElement('div');
+                currentToolContainer.className = 'tool-container';
+                chat.appendChild(currentToolContainer);
+            }
+            const div = document.createElement('div');
+            div.className = 'tool';
+            div.innerHTML = '<pre>' + text + '</pre>';
+            currentToolContainer.appendChild(div);
+            currentToolContainer.scrollTop = currentToolContainer.scrollHeight;
+            chat.scrollTop = chat.scrollHeight;
+        }
+
+        function closeToolContainer() {
+            currentToolContainer = null;
+        }
         let sessionStarted = false;  // Track if session has messages
 
         async function loadModels() {
@@ -395,22 +444,44 @@ HTML = """<!DOCTYPE html>
 
         async function loadSessions() {
             try {
-                const res = await fetch('/sessions');
+                const showArchived = document.getElementById('show-archived').checked;
+                const res = await fetch('/sessions?include_archived=' + showArchived);
                 const data = await res.json();
                 const container = document.getElementById('sessions-list');
                 if (data.sessions.length === 0) {
-                    container.innerHTML = '<div class="no-sessions">No active sessions</div>';
+                    container.innerHTML = '<div class="no-sessions">' + (showArchived ? 'No sessions' : 'No active sessions') + '</div>';
                     return;
                 }
-                container.innerHTML = data.sessions.map(s =>
-                    '<a href="/?session=' + s.id + '" class="session-link' + (s.id === sessionId ? ' active' : '') + '">' +
-                    '<span class="session-id">' + s.id.slice(0, 8) + '</span>' +
-                    '<span class="session-preview">' + (s.preview || 'Empty') + '</span>' +
-                    '<span class="session-count">' + s.messages + ' msgs</span>' +
-                    '</a>'
-                ).join('');
+                container.innerHTML = data.sessions.map(s => {
+                    const isArchived = s.is_archived;
+                    const classes = 'session-link' + (s.id === sessionId ? ' active' : '') + (isArchived ? ' archived' : '');
+                    const icon = isArchived ? '↩' : '×';
+                    const btnAction = isArchived ? 'false' : 'true';
+                    return '<a href="/?session=' + s.id + '" class="' + classes + '">' +
+                        '<div class="session-content">' +
+                        '<span class="session-preview">' + (s.preview || 'New chat') + '</span>' +
+                        '<span class="session-count">' + s.messages + ' msgs</span>' +
+                        '</div>' +
+                        '<button class="archive-btn" onclick="archiveSession(event, \\'' + s.id + '\\', ' + btnAction + ')">' + icon + '</button>' +
+                        '</a>';
+                }).join('');
             } catch (e) {
                 console.log('Failed to load sessions:', e);
+            }
+        }
+
+        async function archiveSession(event, id, archive) {
+            event.preventDefault();
+            event.stopPropagation();
+            try {
+                await fetch('/sessions/' + id + '/archive', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({archive: archive})
+                });
+                loadSessions();
+            } catch (e) {
+                console.log('Failed to archive session:', e);
             }
         }
 
@@ -438,6 +509,8 @@ HTML = """<!DOCTYPE html>
         async function runCommand(text) {
             addMsg(text, 'user');
             promptInput.value = '';
+            promptInput.disabled = true;
+            promptInput.placeholder = 'Running command...';
             sendBtn.disabled = true;
             sessionStarted = true;
 
@@ -493,6 +566,8 @@ HTML = """<!DOCTYPE html>
                 addMsg('Error: ' + err.message, 'error');
             } finally {
                 sendBtn.disabled = false;
+                promptInput.disabled = false;
+                promptInput.placeholder = 'Ask Claude...';
                 promptInput.focus();
             }
         }
@@ -508,8 +583,11 @@ HTML = """<!DOCTYPE html>
 
             addMsg(text, 'user');
             promptInput.value = '';
+            promptInput.disabled = true;
+            promptInput.placeholder = 'Waiting for response...';
             sendBtn.disabled = true;
             currentAssistant = null;
+            currentToolContainer = null;
 
             sessionStarted = true;
 
@@ -554,6 +632,7 @@ HTML = """<!DOCTYPE html>
                                 const data = JSON.parse(line.slice(6));
                                 if (data.text) {
                                     removeLoading();
+                                    closeToolContainer();
                                     if (!currentAssistant) {
                                         currentAssistant = addMsg('', 'assistant');
                                     }
@@ -561,14 +640,16 @@ HTML = """<!DOCTYPE html>
                                     chat.scrollTop = chat.scrollHeight;
                                 } else if (data.tool) {
                                     removeLoading();
-                                    addMsg('🔧 ' + data.tool + ': ' + data.input, 'tool');
+                                    addToolMsg('🔧 ' + data.tool + ': ' + data.input);
                                 } else if (data.result) {
-                                    addMsg('✓ ' + data.result.slice(0, 300), 'tool');
+                                    addToolMsg('✓ ' + data.result.slice(0, 300));
                                 } else if (data.error) {
                                     removeLoading();
+                                    closeToolContainer();
                                     addMsg('Error: ' + data.error, 'error');
                                 } else if (data.done) {
                                     removeLoading();
+                                    closeToolContainer();
                                     loadSessions(); // Refresh session list
                                 }
                             } catch (e) {
@@ -583,6 +664,8 @@ HTML = """<!DOCTYPE html>
                 addMsg('Error: ' + err.message, 'error');
             } finally {
                 sendBtn.disabled = false;
+                promptInput.disabled = false;
+                promptInput.placeholder = 'Ask Claude...';
                 promptInput.focus();
             }
         }

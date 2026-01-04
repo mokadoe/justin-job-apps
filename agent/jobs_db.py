@@ -349,12 +349,19 @@ async def get_stats() -> dict:
         result = await db.execute(select(func.count(Contact.id)))
         contacts = result.scalar()
 
+        # Get evaluated jobs count
+        result = await db.execute(
+            select(func.count(Job.id)).where(Job.evaluated == True)
+        )
+        evaluated = result.scalar()
+
     return {
         "companies": companies,
         "jobs": jobs,
         "target_jobs": targets,
         "pending_jobs": pending,
         "contacts": contacts,
+        "evaluated_jobs": evaluated,
     }
 
 
@@ -467,3 +474,133 @@ async def reset_evaluated() -> int:
 
         await db.commit()
         return count
+
+
+async def clear_target_jobs() -> int:
+    """Delete all rows from target_jobs table. Returns count deleted."""
+    async with jobs_session_factory() as db:
+        result = await db.execute(select(TargetJob))
+        targets = result.scalars().all()
+
+        count = len(targets)
+        for target in targets:
+            await db.delete(target)
+
+        await db.commit()
+        return count
+
+
+# Pending review tracking (status=0 means pending Sonnet review)
+
+async def insert_review_job(
+    job_id: int,
+    relevance_score: float,
+    match_reason: str,
+    priority: int = 1,
+    is_intern: bool = False,
+    experience_analysis: dict = None
+) -> TargetJob | None:
+    """Insert a REVIEW job into target_jobs with status=0 (pending Sonnet review).
+
+    Returns TargetJob if inserted, None if already exists.
+    """
+    import json
+
+    async with jobs_session_factory() as db:
+        # Check if already exists
+        result = await db.execute(
+            select(TargetJob).where(TargetJob.job_id == job_id)
+        )
+        existing = result.scalar_one_or_none()
+        if existing:
+            return None
+
+        target = TargetJob(
+            job_id=job_id,
+            relevance_score=relevance_score,
+            match_reason=match_reason,
+            status=0,  # pending_review (waiting for Sonnet)
+            priority=priority,
+            is_intern=is_intern,
+            experience_analysis=json.dumps(experience_analysis) if experience_analysis else None
+        )
+        db.add(target)
+        await db.commit()
+        await db.refresh(target)
+        return target
+
+
+async def get_pending_review_jobs() -> list[dict]:
+    """Get jobs with status=0 (pending Sonnet review) with full job details."""
+    async with jobs_session_factory() as db:
+        result = await db.execute(
+            select(
+                TargetJob.id.label("target_id"),
+                TargetJob.job_id,
+                TargetJob.relevance_score,
+                TargetJob.match_reason,
+                TargetJob.priority,
+                TargetJob.is_intern,
+                TargetJob.experience_analysis,
+                Job.job_title,
+                Job.job_description,
+                Job.location,
+                Company.name.label("company_name")
+            )
+            .join(Job, TargetJob.job_id == Job.id)
+            .join(Company, Job.company_id == Company.id)
+            .where(TargetJob.status == 0)
+            .order_by(TargetJob.id)
+        )
+        rows = result.all()
+
+        return [
+            {
+                "target_id": r.target_id,
+                "job_id": r.job_id,
+                "id": r.job_id,  # Alias for compatibility with filter logic
+                "relevance_score": r.relevance_score,
+                "match_reason": r.match_reason,
+                "priority": r.priority,
+                "is_intern": r.is_intern,
+                "is_non_us": r.priority == 3,  # priority 3 = non-US
+                "experience_analysis": r.experience_analysis,
+                "job_title": r.job_title,
+                "job_description": r.job_description,
+                "location": r.location,
+                "company_name": r.company_name,
+                "score": r.relevance_score,  # Alias for Sonnet compatibility
+                "reasoning": r.match_reason,  # Alias for Sonnet compatibility
+            }
+            for r in rows
+        ]
+
+
+async def finalize_review_job(job_id: int, accept: bool, new_score: float = None, new_reason: str = None) -> bool:
+    """Finalize a pending review job after Sonnet decision.
+
+    If accept=True: Update status to 1 (pending) with optional new score/reason
+    If accept=False: Delete the row (rejected)
+
+    Returns True if row was modified/deleted, False if not found.
+    """
+    async with jobs_session_factory() as db:
+        result = await db.execute(
+            select(TargetJob).where(TargetJob.job_id == job_id)
+        )
+        target = result.scalar_one_or_none()
+
+        if not target:
+            return False
+
+        if accept:
+            target.status = 1  # pending (passed filter)
+            if new_score is not None:
+                target.relevance_score = new_score
+            if new_reason is not None:
+                target.match_reason = new_reason
+        else:
+            await db.delete(target)
+
+        await db.commit()
+        return True

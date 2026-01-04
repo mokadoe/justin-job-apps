@@ -11,7 +11,7 @@ from dotenv import load_dotenv
 env_path = Path(__file__).parent.parent / ".env"
 load_dotenv(env_path)
 
-from sqlalchemy import Column, String, Text, DateTime, ForeignKey, select
+from sqlalchemy import Column, String, Text, DateTime, Boolean, ForeignKey, select
 from sqlalchemy.sql import func
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
 from sqlalchemy.orm import DeclarativeBase, relationship
@@ -27,12 +27,13 @@ class ChatSession(Base):
     id = Column(String, primary_key=True, default=lambda: str(uuid4()))
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+    is_archived = Column(Boolean, default=False, server_default="false")
 
     messages = relationship("Message", back_populates="session", cascade="all, delete-orphan")
 
 
 class Message(Base):
-    __tablename__ = "messages"
+    __tablename__ = "chat_messages"
 
     id = Column(String, primary_key=True, default=lambda: str(uuid4()))
     session_id = Column(String, ForeignKey("sessions.id"), nullable=False)
@@ -151,12 +152,18 @@ async def get_chat_history(session_id: str) -> list[dict]:
         return [{"role": m.role, "content": m.content} for m in messages]
 
 
-async def get_all_sessions() -> list[dict]:
-    """Get all sessions with preview info."""
+async def get_all_sessions(include_archived: bool = False) -> list[dict]:
+    """Get all sessions with preview info.
+
+    Args:
+        include_archived: If True, include archived sessions. Default False.
+    """
     async with async_session_factory() as db:
-        result = await db.execute(
-            select(ChatSession).order_by(ChatSession.updated_at.desc())
-        )
+        query = select(ChatSession).order_by(ChatSession.updated_at.desc())
+        if not include_archived:
+            query = query.where(ChatSession.is_archived == False)
+
+        result = await db.execute(query)
         sessions = result.scalars().all()
 
         session_list = []
@@ -181,6 +188,7 @@ async def get_all_sessions() -> list[dict]:
                 "preview": preview,
                 "created_at": s.created_at.isoformat() if s.created_at else None,
                 "updated_at": s.updated_at.isoformat() if s.updated_at else None,
+                "is_archived": s.is_archived if hasattr(s, 'is_archived') else False,
             })
 
         return session_list
@@ -204,3 +212,24 @@ async def session_exists(session_id: str) -> bool:
     async with async_session_factory() as db:
         result = await db.execute(select(ChatSession).where(ChatSession.id == session_id))
         return result.scalar_one_or_none() is not None
+
+
+async def archive_session(session_id: str, archive: bool = True) -> bool:
+    """Archive or unarchive a session.
+
+    Args:
+        session_id: The session to archive/unarchive
+        archive: True to archive, False to unarchive
+
+    Returns:
+        True if session was found and updated, False otherwise
+    """
+    async with async_session_factory() as db:
+        result = await db.execute(select(ChatSession).where(ChatSession.id == session_id))
+        session = result.scalar_one_or_none()
+
+        if session:
+            session.is_archived = archive
+            await db.commit()
+            return True
+        return False
