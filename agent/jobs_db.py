@@ -95,6 +95,9 @@ class Contact(JobsBase):
     """Key people at companies.
 
     is_priority: 1=founder/CEO/CTO (decision maker), 0=other engineering leadership
+    match_confidence: 'high' or 'medium' - confidence they work at this company
+    person_context: background info from LinkedIn scrape or Google search
+    context_source: 'linkedin' or 'google' - where person_context came from
     """
     __tablename__ = "contacts"
 
@@ -104,6 +107,9 @@ class Contact(JobsBase):
     title = Column(String)
     linkedin_url = Column(String)
     is_priority = Column(Boolean, default=False)
+    match_confidence = Column(String, default='medium')
+    person_context = Column(Text)
+    context_source = Column(String)
     discovered_date = Column(String, default=lambda: datetime.now(timezone.utc).isoformat())
 
     company = relationship("Company", back_populates="contacts")
@@ -362,6 +368,59 @@ async def get_stats() -> dict:
         "pending_jobs": pending,
         "contacts": contacts,
         "evaluated_jobs": evaluated,
+    }
+
+
+async def get_pipeline_stats() -> dict:
+    """Get pipeline stage statistics for the pipeline viewer.
+
+    Returns counts and last-run timestamps for each stage.
+    Timestamps are ISO strings or None if never run.
+    """
+    async with jobs_session_factory() as db:
+        # Discover: companies count + most recent discovered_date
+        result = await db.execute(select(func.count(Company.id)))
+        discover_count = result.scalar()
+        result = await db.execute(select(func.max(Company.discovered_date)))
+        discover_last = result.scalar()
+
+        # Scrape: jobs count + most recent last_scraped
+        result = await db.execute(select(func.count(Job.id)))
+        scrape_count = result.scalar()
+        result = await db.execute(select(func.max(Company.last_scraped)))
+        scrape_last = result.scalar()
+
+        # Filter: target_jobs count + most recent added_date
+        result = await db.execute(select(func.count(TargetJob.id)))
+        filter_count = result.scalar()
+        result = await db.execute(select(func.max(TargetJob.added_date)))
+        filter_last = result.scalar()
+
+        # Targets: pending count (status=1), same timestamp as filter
+        result = await db.execute(
+            select(func.count(TargetJob.id)).where(TargetJob.status == 1)
+        )
+        targets_pending = result.scalar()
+
+        # Contacts: count + most recent discovered_date
+        result = await db.execute(select(func.count(Contact.id)))
+        contacts_count = result.scalar()
+        result = await db.execute(select(func.max(Contact.discovered_date)))
+        contacts_last = result.scalar()
+
+        # Outreach: messages count + most recent generated_date
+        result = await db.execute(select(func.count(OutreachMessage.id)))
+        outreach_count = result.scalar()
+        result = await db.execute(select(func.max(OutreachMessage.generated_date)))
+        outreach_last = result.scalar()
+
+    return {
+        "discover": {"count": discover_count, "last_run": discover_last},
+        "scrape": {"count": scrape_count, "last_run": scrape_last},
+        "filter": {"count": filter_count, "last_run": filter_last},
+        "targets": {"count": targets_pending, "last_run": filter_last},  # Same as filter
+        "contacts": {"count": contacts_count, "last_run": contacts_last},
+        "outreach": {"count": outreach_count, "last_run": outreach_last},
     }
 
 
