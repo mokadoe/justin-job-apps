@@ -6,10 +6,7 @@
 >
 > See [spec_railway.md](spec_railway.md) for deployment configuration.
 > See [db_setup.md](db_setup.md) for database schemas and connections.
-
-## Overview
-
-A web-based chat interface that connects to Claude via the Claude Agent SDK. Supports multiple concurrent sessions with conversation history, tool usage, session management, and **slash commands** for job pipeline operations.
+> See [commands/COMMANDS.md](commands/COMMANDS.md) for adding new commands.
 
 ## Architecture
 
@@ -18,16 +15,12 @@ A web-based chat interface that connects to Claude via the Claude Agent SDK. Sup
 │                         Browser                                 │
 │  ┌──────────────┐  ┌──────────────────────────────────────────┐│
 │  │   Sidebar    │  │              Main Chat                   ││
-│  │              │  │  ┌────────────────────────────────────┐  ││
-│  │  Sessions    │  │  │        Message History             │  ││
-│  │    List      │  │  └────────────────────────────────────┘  ││
-│  │              │  │  ┌────────────────────────────────────┐  ││
-│  │  + New Chat  │  │  │     Input + Send Button            │  ││
-│  ├──────────────┤  │  └────────────────────────────────────┘  ││
-│  │  Commands    │  │                                          ││
-│  │  /scrape     │  │  Detects "/" prefix → POST /command      ││
-│  │  /filter     │  │  Otherwise        → POST /chat           ││
-│  │  /jobs       │  │                                          ││
+│  │  Sessions    │  │  ┌────────────────────────────────────┐  ││
+│  │  Commands    │  │  │   Pipeline Viewer (collapsible)    │  ││
+│  │  + New Chat  │  │  ├────────────────────────────────────┤  ││
+│  ├──────────────┤  │  │        Message History             │  ││
+│  │  Archive     │  │  ├────────────────────────────────────┤  ││
+│  │  Toggle      │  │  │   Input + Model Selector + Send    │  ││
 │  └──────────────┘  └──────────────────────────────────────────┘│
 └─────────────────────────────────────────────────────────────────┘
                               │
@@ -56,7 +49,7 @@ A web-based chat interface that connects to Claude via the Claude Agent SDK. Sup
 
 **Request:**
 ```json
-{ "prompt": "Hello, Claude!" }
+{ "prompt": "Hello!", "model": "claude-haiku-4-5-20251001" }
 ```
 
 **Response:** SSE stream with events:
@@ -71,11 +64,11 @@ A web-based chat interface that connects to Claude via the Claude Agent SDK. Sup
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | `GET` | `/commands` | List available commands |
-| `POST` | `/command/{session_id}` | Execute slash command, receive SSE stream |
+| `POST` | `/command/{session_id}` | Execute slash command |
 
 **POST /command/{session_id} Request:**
 ```json
-{ "prompt": "/filter 100" }
+{ "text": "/filter 100" }
 ```
 
 **Response:** SSE stream with events:
@@ -87,72 +80,43 @@ A web-based chat interface that connects to Claude via the Claude Agent SDK. Sup
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| `GET` | `/sessions` | List all active sessions |
-| `GET` | `/session/{id}` | Check session status |
+| `GET` | `/sessions` | List sessions (`?include_archived=true` for all) |
+| `GET` | `/session/{id}` | Check session status + model |
 | `DELETE` | `/session/{id}` | End and cleanup session |
-| `GET` | `/history/{id}` | Get chat history for session |
+| `POST` | `/sessions/{id}/archive` | Archive/unarchive session |
+| `GET` | `/history/{id}` | Get chat history |
 
-### UI
+### Pipeline Stats
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| `GET` | `/` | Serve chat interface HTML |
-| `GET` | `/?session={id}` | Resume specific session |
+| `GET` | `/pipeline/stats` | Get pipeline stage statistics |
 
-## Slash Commands
+### Models
 
-Commands provide direct access to job pipeline operations without going through Claude.
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/models` | List available Claude models |
 
-### Available Commands
+### Other
 
-| Command | Description |
-|---------|-------------|
-| `/scrape ashby [--force]` | Fetch jobs from all Ashby companies in DB (skip recently scraped unless --force) |
-| `/scrape ashby <company>...` | Fetch jobs from specific Ashby companies |
-| `/scrape simplify` | Fetch prospective companies from SimplifyJobs |
-| `/filter [limit]` | AI filter jobs for new grad relevance (two-stage: Haiku + Sonnet) |
-| `/filter reset` | Reset evaluated flag on all jobs (re-filter) |
-| `/jobs stats` | Show database statistics |
-| `/jobs pending` | Show pending target jobs |
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/` | Serve chat interface (embedded HTML) |
+| `GET` | `/health` | Health check for Railway |
 
-### Two-Stage AI Filtering (`/filter`)
+## Available Models
 
-```
-Jobs → Stage 0: Regex → Stage 1: Haiku → Stage 2: Sonnet → target_jobs
-       (fast, free)    (cheap, batch)   (expensive, profile-aware)
-```
-
-1. **Stage 0 - Regex Pre-filter**: Reject obvious mismatches (senior roles, non-engineering)
-2. **Stage 1 - Haiku**: Batch evaluate remaining jobs for ACCEPT/REVIEW/REJECT
-3. **Stage 2 - Sonnet**: Review borderline cases with `profile.json` context
-
-Results:
-- ACCEPT → Insert into `target_jobs` with priority (1=US, 3=non-US)
-- REJECT → Mark as evaluated, not stored in target_jobs
-
-### Command Architecture
-
-```
-agent/commands/
-├── __init__.py    # Registry, dispatcher, list_commands()
-├── scrape.py      # /scrape handlers
-├── filter.py      # /filter handlers (two-stage AI)
-└── jobs.py        # /jobs handlers
-```
-
-**Registry Pattern:**
 ```python
-from commands import register
-
-@register("mycommand",
-          description="What it does",
-          usage="/mycommand <arg>")
-async def handle_mycommand(args: str):
-    yield {"type": "progress", "text": "Working..."}
-    yield {"type": "done", "text": "Complete!"}
+AVAILABLE_MODELS = [
+    "claude-haiku-4-5-20251001",
+    "claude-sonnet-4-5-20250929",
+    "claude-opus-4-5-20251101",
+]
+DEFAULT_MODEL = "claude-haiku-4-5-20251001"
 ```
 
-**Code Reuse:** Commands import from `src/scrapers/` and `src/filters/` via sys.path manipulation.
+Model can be changed per-session via the UI dropdown. Switching models reconnects the SDK client.
 
 ## Session Management
 
@@ -160,90 +124,79 @@ async def handle_mycommand(args: str):
 
 1. **Creation**: New session created on first `/chat/{id}` request
 2. **Reuse**: Same `session_id` reuses existing `ClaudeSDKClient`
-3. **Cleanup**: `DELETE /session/{id}` disconnects client and clears data
+3. **Model Switch**: Changing models disconnects and recreates client with history
+4. **Archive**: Sessions can be archived (hidden from default list)
+5. **Cleanup**: `DELETE /session/{id}` disconnects client and deletes from DB
 
-### Storage
+### In-Memory State
 
-See [db_setup.md](db_setup.md) for complete database schemas.
-
-**In-Memory (ephemeral):**
 ```python
 sessions: dict[str, ClaudeSDKClient]     # SDK client instances
+session_models: dict[str, str]            # Model per session
 session_locks: dict[str, asyncio.Lock]   # Prevent race conditions
+```
+
+Note: SDK connections are ephemeral. On restart, chat history is reloaded from DB but Claude's context resets.
+
+## Claude Agent SDK Configuration
+
+```python
+ClaudeAgentOptions(
+    model=model,  # Selected model
+    allowed_tools=["Read", "Write", "Edit", "Bash", "Glob", "Grep", "WebSearch", "WebFetch"],
+    permission_mode="acceptEdits",
+    system_prompt=generate_system_prompt(),  # Includes command docs
+)
 ```
 
 ## Frontend
 
-### URL-Based Session Routing
+### URL Routing
 
-- `http://localhost:8000/` → Creates new session, updates URL to `/?session={id}`
-- `http://localhost:8000/?session={id}` → Resumes existing session, loads history
+- `/?session={id}` - Resume existing session, loads history
+- `/` (no param) - Creates new session, updates URL
 
 ### UI Components
 
 | Component | Description |
 |-----------|-------------|
-| Sidebar | Lists all sessions with preview + message count |
-| Commands Panel | Shows available slash commands (clickable) |
-| "+ New Chat" | Creates fresh session |
-| Chat area | Scrollable message history |
-| Input | Text input + Send button (detects "/" prefix) |
+| Pipeline Viewer | Collapsible bar showing pipeline stage counts |
+| Sidebar | Sessions list + commands panel + archive toggle |
+| Model Selector | Dropdown to switch Claude models |
+| Chat area | Scrollable message history with tool collapsing |
+| Input | Text input (detects "/" prefix for commands) |
 
-### Message Types (CSS classes)
+### Message Styling
 
 | Class | Style | Usage |
 |-------|-------|-------|
 | `.user` | Purple, right-aligned | User messages |
 | `.assistant` | Dark blue | Claude responses |
-| `.tool` | Dark green, monospace | Tool usage/results |
-| `.error` | Dark red | Errors |
-
-## Configuration
-
-### Claude Agent Options
-
-```python
-ClaudeAgentOptions(
-    model="claude-haiku-4-5-20251001",
-    allowed_tools=["Read", "Write", "Edit", "Bash", "Glob", "Grep", "WebSearch", "WebFetch"],
-    permission_mode="acceptEdits",
-)
-```
-
-### Running Locally
-
-```bash
-cd agent
-pip install -r requirements.txt
-uvicorn main:app --reload --port 8000
-```
-
-## Known Limitations
-
-1. **No authentication** - Anyone can access any session
-2. **Single server** - No horizontal scaling support
-3. **SDK context not persisted** - Chat history persists, but Claude's internal context resets on restart
+| `.system` | Teal, monospace | Command output |
+| `.tool` | Green, collapsible | Tool usage/results |
+| `.error` | Red | Errors |
 
 ## Files
 
 ```
 agent/
-├── main.py           # FastAPI server + embedded HTML
-├── db.py             # Chat database models (sessions, messages)
-├── jobs_db.py        # Jobs database models + filter helpers
-├── commands/         # Slash command handlers
-│   ├── __init__.py   # Registry + dispatcher
-│   ├── scrape.py     # /scrape command
-│   ├── filter.py     # /filter command (two-stage AI)
-│   └── jobs.py       # /jobs command
-├── requirements.txt  # Dependencies
-├── spec.md           # This file
-├── spec_railway.md   # Railway deployment
-├── db_setup.md       # Database documentation
-├── Dockerfile        # Container build
-├── railway.toml      # Railway config
-└── data/
-    └── chat.db       # SQLite database (local, gitignored)
+├── main.py              # FastAPI server + embedded HTML
+├── db.py                # Chat database (sessions, messages)
+├── jobs_db.py           # Jobs database (companies, jobs, targets)
+├── commands/            # Slash command handlers
+│   ├── __init__.py      # Registry, dispatcher, doc generation
+│   ├── scrape.py        # /scrape command
+│   ├── filter.py        # /filter command
+│   └── jobs.py          # /jobs command
+├── spec.md              # This file
+├── spec_railway.md      # Railway deployment
+├── db_setup.md          # Database documentation
+├── CLAUDE_HEADER.md     # Header for auto-generated CLAUDE.md
+├── CLAUDE.md            # Auto-generated (don't edit)
+├── requirements.txt     # Python dependencies
+├── Dockerfile           # Container build
+├── railway.toml         # Railway config
+└── data/                # Local SQLite (gitignored)
 ```
 
 ## Dependencies
@@ -258,6 +211,18 @@ aiosqlite>=0.19.0
 asyncpg>=0.29.0
 python-dotenv>=1.0.0
 anthropic>=0.50.0
-requests>=2.31.0
-beautifulsoup4>=4.12.0
 ```
+
+## Running Locally
+
+```bash
+cd agent
+pip install -r requirements.txt
+uvicorn main:app --reload --port 8000
+```
+
+## Known Limitations
+
+1. **No authentication** - Anyone can access any session
+2. **Single server** - No horizontal scaling support
+3. **SDK context resets** - Chat history persists, but Claude's context resets on restart

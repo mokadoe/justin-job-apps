@@ -3,7 +3,7 @@
 > How to add new commands to the agent chat interface.
 >
 > See [spec.md](../spec.md) for application architecture.
-> See [db_setup.md](../db_setup.md) for database access patterns.
+> See [db_setup.md](../db_setup.md) for database schemas.
 
 ## Quick Start
 
