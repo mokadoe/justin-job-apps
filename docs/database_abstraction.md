@@ -68,12 +68,26 @@ Add the import at the top of your file:
 import sys
 from pathlib import Path
 
-# Add utils to path for db import
-sys.path.insert(0, str(Path(__file__).parent.parent / "utils"))
-from jobs_db_conn import get_connection, is_remote
+# Add src/ to path for imports (works for both direct run and agent import)
+src_path = Path(__file__).parent.parent  # Adjust .parent count based on file depth
+if str(src_path) not in sys.path:
+    sys.path.insert(0, str(src_path))
+from utils.jobs_db_conn import get_connection, is_remote
 ```
 
-Note: Adjust the path based on your file's location relative to `src/utils/`.
+**IMPORTANT - Import Pattern:**
+- Always add **`src/`** to `sys.path`, not project root
+- Always import as **`from utils.xxx`**, never `from src.utils.xxx`
+- This ensures compatibility with both:
+  - Direct execution (`python3 src/filters/filter_jobs.py`)
+  - Agent import (agent adds `src/` to path, then imports `from filters.xxx`)
+
+**Path depth examples:**
+| File location | Path to src/ |
+|---------------|--------------|
+| `src/filters/filter_jobs.py` | `Path(__file__).parent.parent` |
+| `src/discovery/dork_ats.py` | `Path(__file__).parent.parent` |
+| `src/discovery/aggregators/run.py` | `Path(__file__).parent.parent.parent` |
 
 ### Step 2: Add the Placeholder Helper
 
