@@ -6,7 +6,7 @@
 
 ## Overview
 
-The `src/utils/db.py` module provides a unified interface for database connections. Scripts can run against:
+The `src/utils/jobs_db_conn.py` module provides a unified interface for database connections. Scripts can run against:
 
 - **Local SQLite** (`data/jobs.db`) - Default for local development
 - **Remote PostgreSQL** (Railway) - When `USE_REMOTE_DB=true` or running on Railway
@@ -15,7 +15,7 @@ This abstraction was introduced to allow the same codebase to work seamlessly wi
 
 ---
 
-## Core Module: `src/utils/db.py`
+## Core Module: `src/utils/jobs_db_conn.py`
 
 ```python
 import os
@@ -70,7 +70,7 @@ from pathlib import Path
 
 # Add utils to path for db import
 sys.path.insert(0, str(Path(__file__).parent.parent / "utils"))
-from db import get_connection, is_remote
+from jobs_db_conn import get_connection, is_remote
 ```
 
 Note: Adjust the path based on your file's location relative to `src/utils/`.
@@ -197,7 +197,7 @@ else:
 ### Core Utilities
 | File | Changes |
 |------|---------|
-| `src/utils/db.py` | **NEW** - Core abstraction module |
+| `src/utils/jobs_db_conn.py` | **NEW** - Core abstraction module |
 | `src/utils/view.py` | 4 connections updated |
 | `src/utils/init_db.py` | Skips for remote (schema managed by agent/) |
 
@@ -284,7 +284,7 @@ cursor.execute("SELECT COUNT(*) as cnt, MAX(id) as max_id FROM jobs")
 ```
 
 ### 4. Forgetting to Load .env
-The `db.py` module loads `.env` automatically, but if you're accessing `DATABASE_URL` directly elsewhere, ensure dotenv is loaded:
+The `jobs_db_conn.py` module loads `.env` automatically, but if you're accessing `DATABASE_URL` directly elsewhere, ensure dotenv is loaded:
 
 ```python
 from dotenv import load_dotenv

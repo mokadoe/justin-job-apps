@@ -22,7 +22,7 @@ load_dotenv()
 # Add parent directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from utils.cost_tracker import track_api_call
-from utils.db import get_connection, is_remote
+from utils.jobs_db_conn import get_connection, is_remote
 
 
 def _placeholder():

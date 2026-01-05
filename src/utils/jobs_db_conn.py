@@ -5,7 +5,7 @@ Respects USE_REMOTE_DB environment variable to switch between:
 - Remote PostgreSQL: DATABASE_URL
 
 Usage:
-    from utils.db import get_connection
+    from utils.jobs_db_conn import get_connection
 
     with get_connection() as conn:
         cursor = conn.cursor()

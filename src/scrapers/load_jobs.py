@@ -14,7 +14,7 @@ from datetime import datetime, timezone
 
 # Add utils to path for db import
 sys.path.insert(0, str(Path(__file__).parent.parent / "utils"))
-from db import get_connection, is_remote
+from jobs_db_conn import get_connection, is_remote
 
 from ats_mapper import ATSMapper
 from ashby_scraper import fetch_ashby_jobs

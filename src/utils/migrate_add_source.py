@@ -8,7 +8,7 @@ Tracks where companies were discovered from (e.g., 'ashby_manual', 'google_dork'
 import sqlite3
 from pathlib import Path
 
-from db import is_remote
+from jobs_db_conn import is_remote
 
 DB_PATH = Path(__file__).parent.parent.parent / 'data' / 'jobs.db'
 

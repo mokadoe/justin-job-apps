@@ -10,7 +10,7 @@ import re
 # Add parent directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent))
 from constants import STATUS_LABELS, STATUS_PENDING, STATUS_NOT_RELEVANT, STATUS_REVIEWED, STATUS_APPLIED
-from db import get_connection, is_remote
+from jobs_db_conn import get_connection, is_remote
 
 
 # ============================================================================

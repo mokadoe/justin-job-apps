@@ -33,7 +33,7 @@ from dotenv import load_dotenv
 
 # Add utils to path for db import
 sys.path.insert(0, str(Path(__file__).parent.parent / "utils"))
-from db import get_connection, is_remote
+from jobs_db_conn import get_connection, is_remote
 
 load_dotenv()
 
