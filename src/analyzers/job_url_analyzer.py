@@ -28,10 +28,11 @@ import anthropic
 # Load environment variables
 load_dotenv(Path(__file__).parent.parent.parent / ".env")
 
-# Add project root to path for imports
-project_root = Path(__file__).parent.parent.parent
-sys.path.insert(0, str(project_root))
-from src.utils.db import get_connection, is_remote
+# Add src/ to path for imports (works for both direct run and agent import)
+src_path = Path(__file__).parent.parent
+if str(src_path) not in sys.path:
+    sys.path.insert(0, str(src_path))
+from utils.jobs_db_conn import get_connection, is_remote
 
 
 def _placeholder():
