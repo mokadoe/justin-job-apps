@@ -1002,28 +1002,32 @@ def discover_contacts_for_companies(companies, use_linkedin_for_size=None):
         result['size_source'] = source
         result['people'] = people
 
-        # Store contacts in database
+        # Store only priority contacts in database
         if people:
-            print(f"  ✓ Found {len(people)} contacts:")
+            priority_people = [p for p in people if p['is_priority']]
+            print(f"  ✓ Found {len(people)} contacts ({len(priority_people)} priority):")
+
             for person in people:
-                is_new = store_contact(
-                    company['id'],
-                    person['name'],
-                    person['title'],
-                    person['linkedin_url'],
-                    person['is_priority'],
-                    person.get('match_confidence', 'medium')
-                )
-
-                if is_new:
-                    result['new_contacts'] += 1
-
-                # Show priority contacts with marker
                 priority_marker = " ⭐" if person['is_priority'] else ""
-                status = "new" if is_new else "exists"
-                print(f"    - {person['name']} ({person['title']}){priority_marker} [{status}]")
 
-            print(f"  → Stored {result['new_contacts']} new contacts in database")
+                # Only store priority contacts
+                if person['is_priority']:
+                    is_new = store_contact(
+                        company['id'],
+                        person['name'],
+                        person['title'],
+                        person['linkedin_url'],
+                        person['is_priority'],
+                        person.get('match_confidence', 'medium')
+                    )
+                    if is_new:
+                        result['new_contacts'] += 1
+                    status = "new" if is_new else "exists"
+                    print(f"    - {person['name']} ({person['title']}){priority_marker} [{status}]")
+                else:
+                    print(f"    - {person['name']} ({person['title']}) [skipped]")
+
+            print(f"  → Stored {result['new_contacts']} new priority contacts")
         else:
             print("    ✗ No people found")
 
