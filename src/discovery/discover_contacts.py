@@ -366,6 +366,20 @@ def get_job_count_for_company(company_id):
         return result['cnt'] if is_remote() else result[0]
 
 
+def get_contact_count_for_company(company_id):
+    """Get the number of contacts already stored for a company."""
+    p = _placeholder()
+    with get_connection() as conn:
+        cursor = conn.cursor()
+
+        cursor.execute(
+            f"SELECT COUNT(*) as cnt FROM contacts WHERE company_id = {p}",
+            (company_id,)
+        )
+        result = cursor.fetchone()
+        return result['cnt'] if is_remote() else result[0]
+
+
 def get_companies_with_pending_jobs(limit=None):
     """Get companies that have pending jobs."""
     with get_connection() as conn:
@@ -962,6 +976,12 @@ def discover_contacts_for_companies(companies, use_linkedin_for_size=None):
 
     for i, company in enumerate(companies, 1):
         print(f"\n[{i}/{len(companies)}] {company['name']}")
+
+        # Check if company already has contacts - skip if so
+        existing_count = get_contact_count_for_company(company['id'])
+        if existing_count > 0:
+            print(f"  ⏭ Skipping - already has {existing_count} contacts")
+            continue
 
         result = {
             'company_id': company['id'],
