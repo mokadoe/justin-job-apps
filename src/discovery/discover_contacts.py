@@ -26,14 +26,23 @@ import requests
 import re
 import os
 from pathlib import Path
-from urllib.parse import urljoin, urlparse
+from urllib.parse import urlparse
 from time import sleep
 from tabulate import tabulate
 from dotenv import load_dotenv
 
-# Add utils to path for db import
-sys.path.insert(0, str(Path(__file__).parent.parent / "utils"))
-from jobs_db_conn import get_connection, is_remote
+# Add src/ to path for imports
+src_path = Path(__file__).parent.parent
+if str(src_path) not in sys.path:
+    sys.path.insert(0, str(src_path))
+
+from utils.jobs_db_conn import get_connection, is_remote
+from utils.constants import (
+    SIZE_SMALL, SIZE_MEDIUM, SIZE_LARGE,
+    USE_LINKEDIN_FOR_COMPANY_SIZE,
+    CONTACT_TARGETING, PRIORITY_ROLE_KEYWORDS,
+    get_company_size_from_employees, get_company_size_from_jobs
+)
 
 load_dotenv()
 
@@ -46,31 +55,6 @@ def _placeholder():
 GOOGLE_API_KEY = os.environ.get("GOOGLE_API_KEY")
 GOOGLE_CSE_ID = os.environ.get("GOOGLE_CSE_ID")
 GOOGLE_SEARCH_URL = "https://www.googleapis.com/customsearch/v1"
-
-# Common URL patterns for contact/team pages
-PAGE_PATTERNS = [
-    '/about',
-    '/about-us',
-    '/team',
-    '/contact',
-    '/contact-us',
-    '/people',
-    '/leadership',
-    '/careers/team',
-    '/company',
-    '/company/team',
-    '/company/about',
-]
-
-# Import company size configuration from constants
-import sys
-sys.path.insert(0, str(Path(__file__).parent.parent))
-from utils.constants import (
-    SIZE_SMALL, SIZE_MEDIUM, SIZE_LARGE,
-    USE_LINKEDIN_FOR_COMPANY_SIZE,
-    CONTACT_TARGETING, PRIORITY_ROLE_KEYWORDS,
-    get_company_size_from_employees, get_company_size_from_jobs
-)
 
 
 def search_linkedin_company_url(company_name):
@@ -164,64 +148,6 @@ def fetch_linkedin_employee_count(linkedin_url):
     except Exception as e:
         print(f"    ✗ LinkedIn fetch error: {e}")
         return None
-
-
-def search_linkedin_company_page(company_name):
-    """
-    Search Google for a company's LinkedIn page URL.
-    DEPRECATED: Use search_linkedin_company_url instead.
-    Kept for backwards compatibility.
-    """
-    return search_linkedin_company_url(company_name)
-
-
-def extract_employee_count(search_result):
-    """
-    Extract employee count from LinkedIn search result snippet.
-    DEPRECATED: Use fetch_linkedin_employee_count instead.
-
-    LinkedIn snippets often contain patterns like:
-    - "1,234 employees"
-    - "501-1000 employees"
-    - "11-50 employees"
-
-    Returns integer count (midpoint for ranges), or None if not found.
-    """
-    if not search_result:
-        return None
-
-    snippet = search_result.get('snippet', '')
-    title = search_result.get('title', '')
-    text = f"{title} {snippet}"
-
-    # Pattern 1: Exact count "1,234 employees" or "1234 employees"
-    exact_match = re.search(r'([\d,]+)\s+employees', text, re.IGNORECASE)
-    if exact_match:
-        count_str = exact_match.group(1).replace(',', '')
-        try:
-            return int(count_str)
-        except ValueError:
-            pass
-
-    # Pattern 2: Range "501-1000 employees" or "11-50 employees"
-    range_match = re.search(r'(\d+)\s*[-–]\s*(\d+)\s+employees', text, re.IGNORECASE)
-    if range_match:
-        try:
-            low = int(range_match.group(1))
-            high = int(range_match.group(2))
-            return (low + high) // 2  # Return midpoint
-        except ValueError:
-            pass
-
-    # Pattern 3: "10K+ employees" or "1K employees"
-    k_match = re.search(r'([\d.]+)\s*K\+?\s+employees', text, re.IGNORECASE)
-    if k_match:
-        try:
-            return int(float(k_match.group(1)) * 1000)
-        except ValueError:
-            pass
-
-    return None
 
 
 def get_employee_count(company_id, company_name, auto_lookup=True):
@@ -380,18 +306,34 @@ def get_contact_count_for_company(company_id):
         return result['cnt'] if is_remote() else result[0]
 
 
+def mark_company_contacts_searched(company_id):
+    """Mark that we've attempted contact discovery for this company."""
+    p = _placeholder()
+    from datetime import datetime, timezone
+    now = datetime.now(timezone.utc).isoformat()
+
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(f"""
+            UPDATE companies SET contacts_searched_at = {p} WHERE id = {p}
+        """, (now, company_id))
+        conn.commit()
+
+
 def get_companies_with_pending_jobs(limit=None):
-    """Get companies that have pending jobs."""
+    """Get companies that have pending jobs and haven't been searched for contacts yet."""
     with get_connection() as conn:
         cursor = conn.cursor()
 
         # Use a subquery with GROUP BY for PostgreSQL compatibility
+        # Exclude companies we've already searched for contacts
         query = """
             SELECT c.id, c.name, c.ats_url, COUNT(t.id) as pending_count
             FROM companies c
             JOIN jobs j ON c.id = j.company_id
             JOIN target_jobs t ON j.id = t.job_id
             WHERE t.status = 1
+              AND c.contacts_searched_at IS NULL
             GROUP BY c.id, c.name, c.ats_url
             ORDER BY pending_count DESC
         """
@@ -453,40 +395,6 @@ def try_find_company_website(company_name, ats_url):
         pass
 
     return None
-
-
-def discover_pages(base_url):
-    """
-    Discover about/team/contact pages for a company.
-
-    Returns dict of {page_type: url} for pages that exist.
-    """
-    discovered = {}
-
-    for pattern in PAGE_PATTERNS:
-        url = urljoin(base_url, pattern)
-
-        try:
-            response = requests.head(url, timeout=5, allow_redirects=True)
-            if response.status_code == 200:
-                # Determine page type from pattern
-                if 'about' in pattern:
-                    page_type = 'about'
-                elif 'team' in pattern or 'people' in pattern or 'leadership' in pattern:
-                    page_type = 'team'
-                elif 'contact' in pattern:
-                    page_type = 'contact'
-                else:
-                    page_type = 'other'
-
-                discovered[page_type] = url
-        except:
-            pass
-
-        # Be respectful with requests
-        sleep(0.2)
-
-    return discovered
 
 
 def search_linkedin_profiles(company_name, title_keywords=None):
@@ -818,86 +726,6 @@ def discover_people_via_google(company_name, company_id=None, use_linkedin_for_s
     return people
 
 
-def extract_people_from_page(url):
-    """
-    Extract people names and titles from a page.
-
-    Looks for patterns like:
-    - "John Smith, CEO"
-    - "Jane Doe - CTO"
-    - "Co-founder: Alice Johnson"
-
-    Returns list of dicts with {name, title}.
-    """
-    try:
-        response = requests.get(url, timeout=10)
-        if response.status_code != 200:
-            return []
-
-        text = response.text
-        people = []
-
-        # Target titles we care about (founders, engineering leadership)
-        target_titles = [
-            'founder', 'co-founder', 'ceo', 'cto', 'chief technology officer',
-            'head of engineering', 'vp engineering', 'engineering manager',
-            'technical lead', 'lead engineer', 'director of engineering'
-        ]
-
-        # Pattern: Look for title words near potential names
-        # Common patterns:
-        # - "John Smith, CEO"
-        # - "CEO: John Smith"
-        # - "John Smith - Founder"
-        # - "Co-founder & CTO - Jane Doe"
-
-        # Split into lines to process more easily
-        lines = text.split('\n')
-
-        for line in lines:
-            line_lower = line.lower()
-
-            # Check if line contains a target title
-            found_title = None
-            for title in target_titles:
-                if title in line_lower:
-                    found_title = title
-                    break
-
-            if not found_title:
-                continue
-
-            # Look for name pattern (capitalized words)
-            # Names are typically: "FirstName LastName" or "FirstName MiddleName LastName"
-            name_pattern = re.compile(r'\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,2})\b')
-            matches = name_pattern.findall(line)
-
-            for match in matches:
-                # Filter out common false positives
-                skip_words = ['The', 'Our', 'About', 'Team', 'Join', 'Contact', 'Privacy', 'Terms',
-                             'Policy', 'More', 'View', 'Click', 'Learn', 'Read', 'See', 'Get',
-                             'Company', 'Inc', 'Corp', 'Ltd', 'New', 'York', 'San', 'Francisco']
-
-                if match.split()[0] not in skip_words and len(match.split()) >= 2:
-                    people.append({
-                        'name': match,
-                        'title': found_title.title()
-                    })
-
-        # Remove duplicates (same name)
-        seen_names = set()
-        unique_people = []
-        for person in people:
-            if person['name'] not in seen_names:
-                seen_names.add(person['name'])
-                unique_people.append(person)
-
-        return unique_people[:10]  # Limit to top 10 to avoid noise
-
-    except Exception as e:
-        return []
-
-
 def store_website(company_id, website):
     """Update company record with discovered website."""
     p = _placeholder()
@@ -977,12 +805,6 @@ def discover_contacts_for_companies(companies, use_linkedin_for_size=None):
     for i, company in enumerate(companies, 1):
         print(f"\n[{i}/{len(companies)}] {company['name']}")
 
-        # Check if company already has contacts - skip if so
-        existing_count = get_contact_count_for_company(company['id'])
-        if existing_count > 0:
-            print(f"  ⏭ Skipping - already has {existing_count} contacts")
-            continue
-
         result = {
             'company_id': company['id'],
             'company_name': company['name'],
@@ -1051,6 +873,9 @@ def discover_contacts_for_companies(companies, use_linkedin_for_size=None):
         else:
             print("    ✗ No people found")
 
+        # Mark that we've searched this company (even if no contacts found)
+        mark_company_contacts_searched(company['id'])
+
         results.append(result)
 
         # Be respectful with requests
@@ -1076,8 +901,8 @@ def main():
                            help='Use LinkedIn for company size (overrides config)')
     size_group.add_argument('--use-job-count', action='store_true',
                            help='Use job count proxy for company size (overrides config, saves API quota)')
-    parser.add_argument('--limit', type=int, default=10,
-                       help='Max companies to process (default: 10)')
+    parser.add_argument('--limit', type=int, default=None,
+                       help='Max companies to process (default: no limit)')
     args = parser.parse_args()
 
     # Determine which method to use: CLI override > config default

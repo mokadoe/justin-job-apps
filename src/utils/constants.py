@@ -27,7 +27,7 @@ SIZE_LARGE = "large"
 # -----------------------------------------------------------------------------
 # True = Use LinkedIn/Google search to find company size (uses API quota)
 # False = Use job posting count as proxy for company size (free, no API calls)
-USE_LINKEDIN_FOR_COMPANY_SIZE = True
+USE_LINKEDIN_FOR_COMPANY_SIZE = False
 
 # -----------------------------------------------------------------------------
 # Workflow 1: LinkedIn Employee Count Method
