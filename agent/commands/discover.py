@@ -69,7 +69,7 @@ async def discover_contacts(limit: int = 10, use_linkedin: bool = False):
     # Get companies with pending target jobs
     await jobs_db.init_jobs_db()
 
-    # Use raw SQL to get companies with pending jobs
+    # Use raw SQL to get companies with pending jobs that haven't been searched yet
     from sqlalchemy import text
     async with jobs_db.jobs_session_factory() as db:
         result = await db.execute(text("""
@@ -78,6 +78,7 @@ async def discover_contacts(limit: int = 10, use_linkedin: bool = False):
             JOIN jobs j ON c.id = j.company_id
             JOIN target_jobs t ON j.id = t.job_id
             WHERE t.status = 1
+              AND c.contacts_searched_at IS NULL
             GROUP BY c.id, c.name, c.ats_url
             ORDER BY pending_count DESC
             LIMIT :limit
