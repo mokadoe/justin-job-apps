@@ -34,7 +34,7 @@ async def handle_discover(args: str):
         # Parse options
         use_linkedin = "--use-linkedin" in parts
         remaining = [p for p in parts[1:] if not p.startswith("--")]
-        limit = int(remaining[0]) if remaining and remaining[0].isdigit() else 10
+        limit = int(remaining[0]) if remaining and remaining[0].isdigit() else None
 
         async for event in discover_contacts(limit=limit, use_linkedin=use_linkedin):
             yield event
@@ -55,57 +55,34 @@ async def handle_discover(args: str):
         yield {"type": "error", "text": f"Unknown action: {action}. Use 'contacts' or 'dork'"}
 
 
-async def discover_contacts(limit: int = 10, use_linkedin: bool = False):
+async def discover_contacts(limit: int = None, use_linkedin: bool = False):
     """Find contacts for companies with pending jobs.
 
-    Uses Google Custom Search API to find LinkedIn profiles of decision-makers.
+    Uses discover_contacts.py functions to avoid duplication.
+    Runs in background thread since discover_contacts uses sync DB calls.
     """
-    import jobs_db
-    from io import StringIO
-    from contextlib import redirect_stdout
-
     yield {"type": "progress", "text": "Loading companies with pending jobs..."}
 
-    # Get companies with pending target jobs
-    await jobs_db.init_jobs_db()
-
-    # Use raw SQL to get companies with pending jobs that haven't been searched yet
-    from sqlalchemy import text
-    async with jobs_db.jobs_session_factory() as db:
-        result = await db.execute(text("""
-            SELECT c.id, c.name, c.ats_url, COUNT(t.id) as pending_count
-            FROM companies c
-            JOIN jobs j ON c.id = j.company_id
-            JOIN target_jobs t ON j.id = t.job_id
-            WHERE t.status = 1
-              AND c.contacts_searched_at IS NULL
-            GROUP BY c.id, c.name, c.ats_url
-            ORDER BY pending_count DESC
-            LIMIT :limit
-        """), {"limit": limit})
-        rows = result.fetchall()
-
-    if not rows:
-        yield {"type": "error", "text": "No companies with pending jobs found. Run /filter first."}
-        return
-
-    companies = [{"id": r[0], "name": r[1], "ats_url": r[2]} for r in rows]
-
-    method = "LinkedIn employee count" if use_linkedin else "job count proxy"
-    yield {"type": "progress", "text": f"Found {len(companies)} companies with pending jobs"}
-    yield {"type": "progress", "text": f"Company sizing method: {method}"}
-    yield {"type": "progress", "text": "=" * 50}
-
-    # Run discover_contacts_for_companies in background thread
+    # Run everything in background thread since discover_contacts.py uses sync DB
     progress_queue = queue.Queue()
     results = []
+    companies = []
     done_event = threading.Event()
     error = None
 
     def run_discovery():
-        nonlocal results, error
+        nonlocal results, companies, error
         try:
-            from discovery.discover_contacts import discover_contacts_for_companies
+            from discovery.discover_contacts import (
+                get_companies_with_pending_jobs,
+                discover_contacts_for_companies
+            )
+
+            # Get companies using the shared function
+            companies = get_companies_with_pending_jobs(limit=limit)
+
+            if not companies:
+                return
 
             # Capture stdout and send to queue
             class QueueWriter:
@@ -155,6 +132,10 @@ async def discover_contacts(limit: int = 10, use_linkedin: bool = False):
 
     if error:
         yield {"type": "error", "text": f"Discovery failed: {error}"}
+        return
+
+    if not companies:
+        yield {"type": "done", "text": "No companies to search. All have been searched already."}
         return
 
     # Summary
