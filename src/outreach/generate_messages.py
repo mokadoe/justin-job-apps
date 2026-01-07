@@ -21,8 +21,14 @@ load_dotenv()
 
 # Add parent directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
-from utils.cost_tracker import track_api_call
 from utils.jobs_db_conn import get_connection, is_remote
+
+# Cost tracking (optional)
+try:
+    from utils.cost_tracker import track_api_call
+except ImportError:
+    def track_api_call(*args, **kwargs):
+        pass
 
 
 def _placeholder():
@@ -208,6 +214,142 @@ def get_existing_messages():
         count = row['cnt'] if is_remote() else row[0]
 
         return count
+
+
+def get_message_for_company(company_id):
+    """Get existing message for a company, if any."""
+    p = _placeholder()
+    with get_connection() as conn:
+        cursor = conn.cursor()
+
+        cursor.execute(f"SELECT message_text FROM messages WHERE company_id = {p}", (company_id,))
+        row = cursor.fetchone()
+
+        if row:
+            return row['message_text'] if is_remote() else row[0]
+        return None
+
+
+def get_company_by_name(company_name):
+    """Get company by name (case-insensitive)."""
+    p = _placeholder()
+    with get_connection() as conn:
+        cursor = conn.cursor()
+
+        cursor.execute(f"""
+            SELECT id, name, website
+            FROM companies
+            WHERE LOWER(name) = LOWER({p})
+        """, (company_name,))
+
+        row = cursor.fetchone()
+        if row:
+            return dict(row)
+        return None
+
+
+def generate_for_company(company_name, profile=None, force=False):
+    """
+    Generate message for a specific company by name.
+
+    Args:
+        company_name: Name of the company (case-insensitive)
+        profile: User profile dict (loaded if not provided)
+        force: If True, regenerate even if message exists
+
+    Returns:
+        Dict with results: {company, message, created}
+    """
+    if profile is None:
+        profile = load_profile()
+
+    company = get_company_by_name(company_name)
+    if not company:
+        print(f"Company not found: {company_name}")
+        return None
+
+    print(f"Company: {company['name']}")
+
+    # Check existing
+    if not force:
+        existing = get_message_for_company(company['id'])
+        if existing:
+            print("Message already exists (use force=True to regenerate)")
+            return {'company': company['name'], 'message': existing, 'created': False}
+
+    # Get context and generate
+    context = get_company_context(company['id'])
+    print(f"Context: {context[:80]}...")
+
+    print("Generating with Claude API...")
+    message = generate_message(profile, company['name'], context, company.get('website'))
+
+    if message:
+        store_message(company['id'], message, context)
+        print("✓ Message generated and stored")
+        return {'company': company['name'], 'message': message, 'created': True}
+    else:
+        print("✗ Failed to generate message")
+        return None
+
+
+def generate_all(profile=None, limit=None, skip_existing=True):
+    """
+    Generate messages for all companies with priority contacts.
+
+    Args:
+        profile: User profile dict (loaded if not provided)
+        limit: Max companies to process (None for all)
+        skip_existing: Skip companies that already have messages
+
+    Returns:
+        Dict with stats: {generated, skipped, failed}
+    """
+    if profile is None:
+        profile = load_profile()
+        print(f"Loaded profile for: {profile['name']}")
+
+    companies = get_companies_with_contacts()
+
+    if not companies:
+        print("No companies with priority contacts found.")
+        return {'generated': 0, 'skipped': 0, 'failed': 0}
+
+    if limit:
+        companies = companies[:limit]
+
+    print(f"Found {len(companies)} companies with priority contacts")
+    print("=" * 50)
+
+    stats = {'generated': 0, 'skipped': 0, 'failed': 0}
+
+    for i, company in enumerate(companies, 1):
+        print(f"\n[{i}/{len(companies)}] {company['name']}")
+
+        # Check existing
+        if skip_existing:
+            existing = get_message_for_company(company['id'])
+            if existing:
+                print("  Skipping - message already exists")
+                stats['skipped'] += 1
+                continue
+
+        # Generate
+        context = get_company_context(company['id'])
+        print(f"  Context: {context[:60]}...")
+
+        print("  Generating with Claude API...")
+        message = generate_message(profile, company['name'], context, company.get('website'))
+
+        if message:
+            store_message(company['id'], message, context)
+            print("  ✓ Message generated and stored")
+            stats['generated'] += 1
+        else:
+            print("  ✗ Failed to generate message")
+            stats['failed'] += 1
+
+    return stats
 
 
 def main():
