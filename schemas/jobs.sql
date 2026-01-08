@@ -74,16 +74,21 @@ CREATE TABLE IF NOT EXISTS contacts (
 );
 
 -- Messages table (generated outreach messages)
--- Stores personalized messages for each company
+-- Stores personalized messages for each (company, job, contact) combination
+-- contact_id can be NULL if no priority contact exists for the company
 CREATE TABLE IF NOT EXISTS messages (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     company_id INTEGER NOT NULL,
+    job_id INTEGER NOT NULL,
+    contact_id INTEGER,
     message_text TEXT NOT NULL,
     company_research TEXT,
     generated_date TEXT DEFAULT CURRENT_TIMESTAMP,
     sent_date TEXT,
     FOREIGN KEY (company_id) REFERENCES companies(id),
-    UNIQUE(company_id)
+    FOREIGN KEY (job_id) REFERENCES jobs(id),
+    FOREIGN KEY (contact_id) REFERENCES contacts(id),
+    UNIQUE(company_id, job_id, contact_id)
 );
 
 -- Outreach table (tracks individual outreach attempts)
@@ -119,6 +124,8 @@ CREATE INDEX IF NOT EXISTS idx_status ON target_jobs(status);
 CREATE INDEX IF NOT EXISTS idx_contact_company ON contacts(company_id);
 CREATE INDEX IF NOT EXISTS idx_contact_priority ON contacts(is_priority);
 CREATE INDEX IF NOT EXISTS idx_message_company ON messages(company_id);
+CREATE INDEX IF NOT EXISTS idx_message_job ON messages(job_id);
+CREATE INDEX IF NOT EXISTS idx_message_contact ON messages(contact_id);
 CREATE INDEX IF NOT EXISTS idx_outreach_company ON outreach(company_id);
 CREATE INDEX IF NOT EXISTS idx_outreach_contact ON outreach(contact_id);
 CREATE INDEX IF NOT EXISTS idx_outreach_status ON outreach(status);
