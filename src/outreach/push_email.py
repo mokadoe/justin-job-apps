@@ -51,6 +51,8 @@ def get_message_for_job(job_id):
         Dict with message, contact, and company info, or None if not found
     """
     p = _placeholder()
+    # PostgreSQL uses TRUE, SQLite uses 1
+    priority_val = "TRUE" if is_remote() else "1"
 
     with get_connection() as conn:
         cursor = conn.cursor()
@@ -78,7 +80,7 @@ def get_message_for_job(job_id):
             WHERE m.job_id = {p}
             ORDER BY
                 CASE WHEN c.match_confidence = 'high' THEN 0 ELSE 1 END,
-                CASE WHEN c.is_priority = 1 THEN 0 ELSE 1 END
+                CASE WHEN c.is_priority = {priority_val} THEN 0 ELSE 1 END
             LIMIT 1
         """, (job_id,))
 
