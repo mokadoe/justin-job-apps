@@ -187,10 +187,8 @@ CONTACT INFO:
 Name: {contact_name}
 Title: {contact_title}
 """
-        contact_instruction = "1. Address the contact by name if appropriate for their role"
     else:
         contact_section = ""
-        contact_instruction = "1. Write a general outreach message (no specific contact)"
 
     prompt = f"""Generate a concise, personalized LinkedIn/email outreach message for a new grad software engineer.
 
@@ -214,14 +212,16 @@ Description: {profile['project_description']}
 GitHub: {profile['github_repo']}
 
 MESSAGE REQUIREMENTS:
-{contact_instruction}
-2. Start with a brief (1-2 sentence) intro about yourself
-3. Express genuine interest in the specific role and company (1-2 sentences)
-4. Mention that you built this outreach automation and include GitHub link (1 sentence)
-5. Keep it conversational and authentic, not salesy
-6. Total length: 4-6 sentences max
-7. DO NOT include subject line or greeting/signature
-8. Write in first person
+1. START with a hook like: "I'm Justin, a CS/Chem double major graduating from Michigan in May. You're getting this because my AI pipeline powered by Claude Code decided you were worth emailing about [job title] at [company]. Here's why I might be worth a reply:" - adapt this naturally but keep the core elements (CS/Chem, graduating May, AI pipeline powered by Claude Code found them, job title, company name)
+2. Keep it conversational and genuine (not salesy or robotic)
+3. Include the GitHub link to the automation project naturally
+4. Express specific interest in their company based on the job description and your skills (1-2 sentences). Be specific if possible but don't lie.
+5. If contact info is provided AND it's interesting/non-obvious, reference it (shows research). Skip generic/obvious context.
+6. Keep total length to 5-7 sentences max
+7. Use bullet points for key info to make it quick to skim
+8. DO NOT include subject line, greeting, or signature
+9. Write in first person
+10. Be authentic - this is a real person reaching out to another real person
 
 Generate the message body only:"""
 
