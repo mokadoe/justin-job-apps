@@ -82,13 +82,15 @@ def get_pending_target_jobs(limit=None):
 def get_priority_contacts_for_company(company_id):
     """Get priority contacts for a company."""
     p = _placeholder()
+    # PostgreSQL uses TRUE, SQLite uses 1
+    priority_val = "TRUE" if is_remote() else "1"
     with get_connection() as conn:
         cursor = conn.cursor()
 
         cursor.execute(f"""
             SELECT id, name, title, linkedin_url
             FROM contacts
-            WHERE company_id = {p} AND is_priority = 1
+            WHERE company_id = {p} AND is_priority = {priority_val}
         """, (company_id,))
 
         return [dict(row) for row in cursor.fetchall()]
