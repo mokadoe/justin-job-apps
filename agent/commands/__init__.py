@@ -156,6 +156,8 @@ from . import scrape
 from . import jobs
 from . import filter
 from . import discover
+from . import generate
+from . import push
 
 
 # ============================================================

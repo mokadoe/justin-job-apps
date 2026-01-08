@@ -84,6 +84,7 @@ CREATE TABLE IF NOT EXISTS messages (
     message_text TEXT NOT NULL,
     company_research TEXT,
     generated_date TEXT DEFAULT CURRENT_TIMESTAMP,
+    draft_created_at TEXT,
     sent_date TEXT,
     FOREIGN KEY (company_id) REFERENCES companies(id),
     FOREIGN KEY (job_id) REFERENCES jobs(id),
