@@ -78,9 +78,32 @@
 - Read relevant source files in `src/`
 - Understand the database schema in `schemas/jobs.sql`
 - Check constants in `src/utils/constants.py`
-- **For database work:** Use `src/utils/db.py` - never hardcode `sqlite3.connect()`
+- **For database work:** Use `src/utils/jobs_db_conn.py` - never hardcode `sqlite3.connect()`
 - Ensure dependencies installed: `pip install -r requirements.txt`
 - Test changes with `make <command>` (test both local and remote if touching DB)
+
+**CRITICAL - Import Pattern for `src/` Files:**
+Files in `src/` run in two contexts: directly via Makefile AND imported by the agent.
+To work in both, follow this pattern:
+
+```python
+import sys
+from pathlib import Path
+
+# Add src/ to path (NOT project root)
+src_path = Path(__file__).parent.parent  # adjust .parent count for file depth
+if str(src_path) not in sys.path:
+    sys.path.insert(0, str(src_path))
+
+# Import as utils.xxx, NOT src.utils.xxx
+from utils.jobs_db_conn import get_connection, is_remote
+from utils.constants import STATUS_PENDING
+```
+
+**Why this matters:**
+- Agent's `commands/__init__.py` adds `src/` to sys.path
+- Using `from src.utils.xxx` breaks because `src` isn't a package in the path
+- Using `from utils.xxx` works in both contexts
 
 #### For `mokadoe.github.io/`
 
@@ -292,7 +315,7 @@ make test  # or project-specific command
 - ✅ Contact discovery (73 contacts, 17 priority decision-makers)
 - ✅ Message generation with Claude API
 - ✅ Email candidate generation with confidence scoring
-- ✅ Complete outreach pipeline (prepare_outreach.py)
+- ✅ Complete outreach pipeline (generate_messages.py)
 - ✅ Full documentation (README, claude.md, docs/)
 - ✅ All code committed and pushed to GitHub
 
@@ -317,7 +340,7 @@ make targets    # View results with priority breakdown
 make inspect    # Database overview
 
 # Outreach commands
-python3 src/outreach/prepare_outreach.py
+python3 src/outreach/generate_messages.py
 ```
 
 **Important Files:**
@@ -373,8 +396,9 @@ npm run deploy  # Deploy to GitHub Pages
 4. **Over-engineering** - Keep it simple, iterate
 5. **Forgetting to update docs** - Document as you go
 6. **Not testing before marking complete** - Always verify
-7. **Hardcoding `sqlite3.connect()`** - Use `src/utils/db.py` for all database connections
+7. **Hardcoding `sqlite3.connect()`** - Use `src/utils/jobs_db_conn.py` for all database connections
 8. **Using `row[0]` for PostgreSQL** - Use `row['column_name']` for compatibility
+9. **Using `from src.utils.xxx` imports** - Use `from utils.xxx` (add `src/` to path, not project root)
 
 ---
 

@@ -333,7 +333,7 @@ Targets don't have recruiters. Need to find founders, CTOs, or hiring managers. 
 **Immediate Next Steps (Week 2):**
 
 1. **Send first 5-10 real outreach emails** (HIGH PRIORITY)
-   - Use `python3 src/outreach/prepare_outreach.py` to generate packages
+   - Use `/generate all` or `python3 src/outreach/generate_messages.py` to generate messages
    - Start with highest-priority contacts (founders at top companies)
    - Track: sent date, email used, response (yes/no), response time
    - Document what works vs. what doesn't
@@ -354,7 +354,6 @@ Targets don't have recruiters. Need to find founders, CTOs, or hiring managers. 
    - Test message length (current 5-7 sent vs. shorter 3-4 sent)
 
 5. **Pipeline Improvements** (LOW PRIORITY)
-   - Add batch mode to `prepare_outreach.py` (generate 5-10 packages at once)
    - Find current working Claude model (opus EOL Jan 2026)
    - Expand contact discovery to remaining 6 companies with pending jobs
 

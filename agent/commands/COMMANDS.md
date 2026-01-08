@@ -81,7 +81,7 @@ from filters.filter_jobs import should_reject_with_regex, batch_jobs
 from discovery.aggregators.run import run_aggregator
 
 # Import outreach
-from outreach.prepare_outreach import generate_message
+from outreach.generate_messages import generate_for_job, generate_all
 ```
 
 **Note:** These imports happen at runtime. Put them inside your handler or helper functions, not at module level, if the module has side effects.

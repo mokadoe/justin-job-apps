@@ -236,7 +236,6 @@ else:
 | File | Changes |
 |------|---------|
 | `src/outreach/generate_messages.py` | 4 connections, ON CONFLICT for upsert |
-| `src/outreach/prepare_outreach.py` | 4 connections |
 
 ### Migrations (Local-Only)
 | File | Changes |
